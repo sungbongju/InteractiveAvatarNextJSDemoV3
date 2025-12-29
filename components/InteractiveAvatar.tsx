@@ -266,7 +266,6 @@ function InteractiveAvatar() {
       // 🆕 리셋 메시지 처리
       if (event.data && event.data.type === 'RESET_AVATAR') {
         console.log('📥 아바타 리셋 신호 받음!');
-        stopAvatar();
         hasStartedRef.current = false;
         hasGreetedRef.current = false;
         userNameRef.current = '';

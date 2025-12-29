@@ -185,7 +185,15 @@ function InteractiveAvatar() {
               greeting = "안녕하세요! 저는 치매 예방 게임 도우미입니다. 도움이 필요하시다면 언제든지 말씀해주세요.";
             }
             console.log("Sending greeting...");
-            await speakWithAvatar(greeting);
+            await new Promise<void>((resolve) => {
+              const onStopTalking = () => {
+                console.log("🎤 아바타 말 끝남!");
+                avatarInstance.off(StreamingEvents.AVATAR_STOP_TALKING, onStopTalking);
+                resolve();
+              };
+              avatarInstance.on(StreamingEvents.AVATAR_STOP_TALKING, onStopTalking);
+              speakWithAvatar(greeting);
+            });
             setChatHistory([{ role: "assistant", content: greeting }]);
             console.log("Greeting sent successfully!");
             await new Promise(resolve => setTimeout(resolve, 2000));

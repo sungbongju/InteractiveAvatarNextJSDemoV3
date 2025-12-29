@@ -152,6 +152,14 @@ function InteractiveAvatar() {
         if (!hasGreetedRef.current) {
           try {
             console.log("Starting voice chat...");
+            // 🆕 마이크 권한 먼저 요청
+            try {
+              const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+              console.log("🎤 마이크 권한 획득!");
+              micStream.getTracks().forEach(track => track.stop()); // 스트림 해제
+            } catch (e) {
+              console.error("❌ 마이크 권한 실패:", e);
+            }
             await avatarInstance.startVoiceChat();
             console.log("Voice chat started - using OpenAI for responses");
             

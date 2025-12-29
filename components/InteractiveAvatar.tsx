@@ -263,6 +263,17 @@ function InteractiveAvatar() {
   // 🆕 게임 시작 메시지 받으면 시작
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
+      // 🆕 리셋 메시지 처리
+      if (event.data && event.data.type === 'RESET_AVATAR') {
+        console.log('📥 아바타 리셋 신호 받음!');
+        stopAvatar();
+        hasStartedRef.current = false;
+        hasGreetedRef.current = false;
+        userNameRef.current = '';
+        userStatsRef.current = null;
+        return;
+      }
+      
       if (event.data && event.data.type === 'START_AVATAR') {
         console.log('📥 게임에서 시작 신호 받음!');
         console.log('📥 받은 데이터:', event.data);

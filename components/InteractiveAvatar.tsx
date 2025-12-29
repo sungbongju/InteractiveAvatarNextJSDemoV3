@@ -56,6 +56,7 @@ function InteractiveAvatar() {
   const hasGreetedRef = useRef(false);
   const hasStartedRef = useRef(false); // 중복 시작 방지
   const userNameRef = useRef<string>('');
+  const userStatsRef = useRef<any>(null);
 
   async function fetchAccessToken() {
     try {
@@ -156,9 +157,33 @@ function InteractiveAvatar() {
             
             await new Promise(resolve => setTimeout(resolve, 1500));
             
-            const greeting = userNameRef.current 
-              ? `안녕하세요 ${userNameRef.current}님! 저는 치매 예방 게임 도우미입니다. 도움이 필요하시다면 언제든지 말씀해주세요.`
-              : "안녕하세요! 저는 치매 예방 게임 도우미입니다. 도움이 필요하시다면 언제든지 말씀해주세요.";
+            let greeting = '';
+            const name = userNameRef.current;
+            const stats = userStatsRef.current;
+            
+            if (name) {
+              greeting = `안녕하세요 ${name}님! 저는 치매 예방 게임 도우미입니다. `;
+              
+              if (stats && stats.best_score) {
+                const bestScore = parseInt(stats.best_score);
+                
+                if (bestScore >= 500) {
+                  greeting += `지난번 최고 점수가 ${bestScore}점으로 정말 훌륭하셨어요! 오늘도 좋은 기록 유지해보아요!`;
+                } else if (bestScore >= 400) {
+                  greeting += `지난번 최고 점수가 ${bestScore}점이셨네요. 오늘은 더 높은 점수에 도전해봐요!`;
+                } else if (bestScore >= 300) {
+                  greeting += `지난번 최고 점수가 ${bestScore}점이셨어요. 오늘은 점수를 더 높여봅시다!`;
+                } else {
+                  greeting += `오늘 좋은 기록을 만들어봐요! 화이팅!`;
+                }
+              } else {
+                greeting += `처음 오셨군요! 즐겁게 게임하시고 두뇌 건강을 지켜봐요!`;
+              }
+              
+              greeting += ` 도움이 필요하시면 언제든 말씀해주세요.`;
+            } else {
+              greeting = "안녕하세요! 저는 치매 예방 게임 도우미입니다. 도움이 필요하시다면 언제든지 말씀해주세요.";
+            }
             console.log("Sending greeting...");
             await speakWithAvatar(greeting);
             setChatHistory([{ role: "assistant", content: greeting }]);
@@ -240,10 +265,14 @@ function InteractiveAvatar() {
     const handleMessage = (event: MessageEvent) => {
       if (event.data && event.data.type === 'START_AVATAR') {
         console.log('📥 게임에서 시작 신호 받음!');
-        console.log('📥 받은 데이터:', event.data);  // 🆕 추가
-        console.log('📥 이름:', event.data.name);    // 🆕 추가
+        console.log('📥 받은 데이터:', event.data);
+        console.log('📥 이름:', event.data.name);
         if (event.data.name) {
           userNameRef.current = event.data.name;
+        }
+        if (event.data.stats) {
+          userStatsRef.current = event.data.stats;
+          console.log('📥 stats:', event.data.stats);
         }
         startSession();
       }

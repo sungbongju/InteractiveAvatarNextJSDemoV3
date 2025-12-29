@@ -54,7 +54,7 @@ function InteractiveAvatar() {
   const mediaStream = useRef<HTMLVideoElement>(null);
   const isProcessingRef = useRef(false);
   const hasGreetedRef = useRef(false);
-  const hasStartedRef = useRef(false); // 중복 시작 방지
+  const hasStartedRef = useRef(false);
   const userNameRef = useRef<string>('');
   const userStatsRef = useRef<any>(null);
 
@@ -135,7 +135,6 @@ function InteractiveAvatar() {
   });
 
   const startSession = useMemoizedFn(async () => {
-    // 중복 시작 방지
     if (hasStartedRef.current) {
       console.log("Session already started, skipping...");
       return;
@@ -151,18 +150,15 @@ function InteractiveAvatar() {
         
         if (!hasGreetedRef.current) {
           try {
-            console.log("Starting voice chat...");
-            // 🆕 마이크 권한 먼저 요청
+            // 🆕 마이크 권한만 먼저 획득
             try {
               const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
               console.log("🎤 마이크 권한 획득!");
-              micStream.getTracks().forEach(track => track.stop()); // 스트림 해제
+              micStream.getTracks().forEach(track => track.stop());
             } catch (e) {
               console.error("❌ 마이크 권한 실패:", e);
             }
-            await avatarInstance.startVoiceChat();
-            console.log("Voice chat started - using OpenAI for responses");
-            
+
             await new Promise(resolve => setTimeout(resolve, 1500));
             
             let greeting = '';
@@ -192,6 +188,7 @@ function InteractiveAvatar() {
             } else {
               greeting = "안녕하세요! 저는 치매 예방 게임 도우미입니다. 도움이 필요하시다면 언제든지 말씀해주세요.";
             }
+
             console.log("Sending greeting...");
             await new Promise<void>((resolve) => {
               const onStopTalking = () => {
@@ -202,10 +199,16 @@ function InteractiveAvatar() {
               avatarInstance.on(StreamingEvents.AVATAR_STOP_TALKING, onStopTalking);
               speakWithAvatar(greeting);
             });
+
             setChatHistory([{ role: "assistant", content: greeting }]);
             console.log("Greeting sent successfully!");
-            await new Promise(resolve => setTimeout(resolve, 4000));
-            console.log("🎤 마이크 준비 완료!");
+
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            // 🆕 greeting 끝난 후에 voice chat 시작!
+            console.log("Starting voice chat...");
+            await avatarInstance.startVoiceChat();
+            console.log("🎤 Voice chat 시작 - 마이크 준비 완료!");
             
             hasGreetedRef.current = true;
           } catch (error) {
@@ -217,7 +220,7 @@ function InteractiveAvatar() {
       avatarInstance.on(StreamingEvents.STREAM_DISCONNECTED, () => {
         console.log("Stream disconnected");
         hasGreetedRef.current = false;
-        hasStartedRef.current = false; // 재연결 가능하도록
+        hasStartedRef.current = false;
       });
 
       avatarInstance.on(StreamingEvents.USER_START, () => {
@@ -242,7 +245,7 @@ function InteractiveAvatar() {
       
     } catch (error) {
       console.error("Error starting avatar session:", error);
-      hasStartedRef.current = false; // 에러 시 재시도 가능하도록
+      hasStartedRef.current = false;
     }
   });
 
@@ -278,10 +281,8 @@ function InteractiveAvatar() {
     hasStartedRef.current = false;
   });
 
-  // 🆕 게임 시작 메시지 받으면 시작
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
-      // 🆕 리셋 메시지 처리
       if (event.data && event.data.type === 'RESET_AVATAR') {
         console.log('📥 아바타 리셋 신호 받음!');
         hasStartedRef.current = false;

@@ -188,6 +188,8 @@ function InteractiveAvatar() {
             await speakWithAvatar(greeting);
             setChatHistory([{ role: "assistant", content: greeting }]);
             console.log("Greeting sent successfully!");
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            console.log("🎤 마이크 준비 완료!");
             
             hasGreetedRef.current = true;
           } catch (error) {

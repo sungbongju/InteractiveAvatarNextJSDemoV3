@@ -31,6 +31,16 @@ const DEFAULT_CONFIG: StartAvatarRequest = {
   },
 };
 
+// 게임별 설명 텍스트
+const gameExplanations: { [key: string]: string } = {
+  hwatu: "화투 짝맞추기 게임이에요! 뒤집어진 카드 중에서 같은 그림을 찾아 짝을 맞추면 됩니다. 기억력에 좋아요!",
+  yut: "윷놀이입니다! 윷을 던져서 나온 결과만큼 말을 움직여 도착점까지 가면 됩니다. 행운을 빌어요!",
+  memory: "숫자 기억하기 게임이에요! 화면에 나타나는 숫자를 잘 보고 기억한 다음, 똑같이 입력하면 됩니다.",
+  proverb: "속담 완성하기 게임입니다! 빈 칸에 들어갈 알맞은 말을 골라 속담을 완성해보세요.",
+  calc: "산수 계산 게임이에요! 간단한 덧셈과 뺄셈 문제를 풀어보세요. 천천히 하셔도 괜찮아요!",
+  sequence: "순서 맞추기 게임입니다! 그림들을 올바른 순서대로 클릭해서 배열해보세요."
+};
+
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
@@ -304,6 +314,14 @@ function InteractiveAvatar() {
           console.log('📥 stats:', event.data.stats);
         }
         startSession();
+      }
+      // useEffect 안에 추가
+      if (event.data && event.data.type === 'EXPLAIN_GAME') {
+        const game = event.data.game;
+        const explanation = gameExplanations[game];
+        if (explanation && avatarRef.current) {
+          speakWithAvatar(explanation);
+        }
       }
     };
     

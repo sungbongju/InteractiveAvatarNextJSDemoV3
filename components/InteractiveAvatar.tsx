@@ -1,0 +1,339 @@
+import {
+  AvatarQuality,
+  StreamingEvents,
+  VoiceChatTransport,
+  VoiceEmotion,
+  StartAvatarRequest,
+  STTProvider,
+  ElevenLabsModel,
+  TaskType,
+} from "@heygen/streaming-avatar";
+import { useEffect, useRef, useState } from "react";
+import { useMemoizedFn, useUnmount } from "ahooks";
+
+import { useStreamingAvatarSession } from "./logic/useStreamingAvatarSession";
+import { StreamingAvatarProvider, StreamingAvatarSessionState } from "./logic";
+
+import { AVATARS } from "@/app/lib/constants";
+
+const DEFAULT_CONFIG: StartAvatarRequest = {
+  quality: AvatarQuality.Low,
+  avatarName: AVATARS[0].avatar_id,
+  voice: {
+    rate: 1.5,
+    emotion: VoiceEmotion.EXCITED,
+    model: ElevenLabsModel.eleven_flash_v2_5,
+  },
+  language: "ko",
+  voiceChatTransport: VoiceChatTransport.WEBSOCKET,
+  sttSettings: {
+    provider: STTProvider.DEEPGRAM,
+  },
+};
+
+interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+function InteractiveAvatar() {
+  const {
+    initAvatar,
+    startAvatar,
+    stopAvatar,
+    sessionState,
+    stream,
+    avatarRef,
+  } = useStreamingAvatarSession();
+
+  const [config] = useState<StartAvatarRequest>(DEFAULT_CONFIG);
+  const [inputText, setInputText] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  const [isListening, setIsListening] = useState(false);
+  const mediaStream = useRef<HTMLVideoElement>(null);
+  const isProcessingRef = useRef(false);
+  const hasGreetedRef = useRef(false);
+  const hasStartedRef = useRef(false); // 중복 시작 방지
+  const userNameRef = useRef<string>('');
+
+  async function fetchAccessToken() {
+    try {
+      const response = await fetch("/api/get-access-token", {
+        method: "POST",
+      });
+      const token = await response.text();
+      console.log("Access Token:", token);
+      return token;
+    } catch (error) {
+      console.error("Error fetching access token:", error);
+      throw error;
+    }
+  }
+
+  const callOpenAI = async (message: string, history: ChatMessage[]) => {
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: message,
+          history: history,
+        }),
+      });
+      const data = await response.json();
+      return data.reply;
+    } catch (error) {
+      console.error("OpenAI API error:", error);
+      return "죄송합니다. 일시적인 오류가 발생했습니다. 다시 말씀해 주세요.";
+    }
+  };
+
+  const speakWithAvatar = async (text: string) => {
+    console.log("=== Attempting to speak ===");
+    console.log("Avatar ref exists:", !!avatarRef.current);
+    console.log("Text to speak:", text);
+    
+    if (!avatarRef.current || !text) {
+      console.log("Cannot speak - missing avatar or text");
+      return;
+    }
+    
+    try {
+      console.log("Calling avatar.speak()...");
+      await avatarRef.current.speak({
+        text: text,
+        taskType: TaskType.REPEAT,
+      });
+      console.log("Speak successful!");
+    } catch (error) {
+      console.error("Avatar speak error:", error);
+    }
+  };
+
+  const handleUserSpeech = useMemoizedFn(async (transcript: string) => {
+    if (!transcript.trim() || isProcessingRef.current) return;
+    
+    isProcessingRef.current = true;
+    setIsLoading(true);
+    
+    console.log("User said:", transcript);
+    
+    const newHistory = [...chatHistory, { role: "user" as const, content: transcript }];
+    setChatHistory(newHistory);
+    
+    const reply = await callOpenAI(transcript, chatHistory);
+    console.log("OpenAI reply:", reply);
+    
+    setChatHistory([...newHistory, { role: "assistant" as const, content: reply }]);
+    
+    await speakWithAvatar(reply);
+    
+    setIsLoading(false);
+    isProcessingRef.current = false;
+  });
+
+  const startSession = useMemoizedFn(async () => {
+    // 중복 시작 방지
+    if (hasStartedRef.current) {
+      console.log("Session already started, skipping...");
+      return;
+    }
+    hasStartedRef.current = true;
+    
+    try {
+      const newToken = await fetchAccessToken();
+      const avatarInstance = initAvatar(newToken);
+
+      avatarInstance.on(StreamingEvents.STREAM_READY, async (event) => {
+        console.log(">>>>> Stream ready:", event.detail);
+        
+        if (!hasGreetedRef.current) {
+          try {
+            console.log("Starting voice chat...");
+            await avatarInstance.startVoiceChat();
+            console.log("Voice chat started - using OpenAI for responses");
+            
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            
+            const greeting = userNameRef.current 
+              ? `안녕하세요 ${userNameRef.current}님! 저는 치매 예방 게임 도우미입니다. 도움이 필요하시다면 언제든지 말씀해주세요.`
+              : "안녕하세요! 저는 치매 예방 게임 도우미입니다. 도움이 필요하시다면 언제든지 말씀해주세요.";
+            console.log("Sending greeting...");
+            await speakWithAvatar(greeting);
+            setChatHistory([{ role: "assistant", content: greeting }]);
+            console.log("Greeting sent successfully!");
+            
+            hasGreetedRef.current = true;
+          } catch (error) {
+            console.error("Error in greeting sequence:", error);
+          }
+        }
+      });
+      
+      avatarInstance.on(StreamingEvents.STREAM_DISCONNECTED, () => {
+        console.log("Stream disconnected");
+        hasGreetedRef.current = false;
+        hasStartedRef.current = false; // 재연결 가능하도록
+      });
+
+      avatarInstance.on(StreamingEvents.USER_START, () => {
+        console.log("User started speaking");
+        setIsListening(true);
+      });
+
+      avatarInstance.on(StreamingEvents.USER_STOP, () => {
+        console.log("User stopped speaking");
+        setIsListening(false);
+      });
+
+      avatarInstance.on(StreamingEvents.USER_END_MESSAGE, (event) => {
+        const finalMessage = event.detail?.message;
+        console.log("User final message:", finalMessage);
+        if (finalMessage && finalMessage.trim()) {
+          handleUserSpeech(finalMessage);
+        }
+      });
+
+      await startAvatar(config);
+      
+    } catch (error) {
+      console.error("Error starting avatar session:", error);
+      hasStartedRef.current = false; // 에러 시 재시도 가능하도록
+    }
+  });
+
+  const handleSendMessage = useMemoizedFn(async () => {
+    const textToSend = inputText.trim();
+    if (!textToSend || !avatarRef.current || isLoading) return;
+
+    setInputText("");
+    setIsLoading(true);
+
+    const newHistory = [...chatHistory, { role: "user" as const, content: textToSend }];
+    setChatHistory(newHistory);
+
+    const reply = await callOpenAI(textToSend, chatHistory);
+
+    setChatHistory([...newHistory, { role: "assistant" as const, content: reply }]);
+
+    await speakWithAvatar(reply);
+
+    setIsLoading(false);
+  });
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
+
+  useUnmount(() => {
+    stopAvatar();
+    hasGreetedRef.current = false;
+    hasStartedRef.current = false;
+  });
+
+  // 🆕 게임 시작 메시지 받으면 시작
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data && event.data.type === 'START_AVATAR') {
+        console.log('📥 게임에서 시작 신호 받음!');
+        console.log('📥 받은 데이터:', event.data);  // 🆕 추가
+        console.log('📥 이름:', event.data.name);    // 🆕 추가
+        if (event.data.name) {
+          userNameRef.current = event.data.name;
+        }
+        startSession();
+      }
+    };
+    
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  useEffect(() => {
+    if (stream && mediaStream.current) {
+      mediaStream.current.srcObject = stream;
+      mediaStream.current.onloadedmetadata = () => {
+        mediaStream.current!.play();
+      };
+    }
+  }, [mediaStream, stream]);
+
+  return (
+    <div className="w-full h-full flex flex-col">
+      {sessionState === StreamingAvatarSessionState.CONNECTED && stream ? (
+        <div className="flex-1 relative flex flex-col">
+          <div className="relative flex-shrink-0">
+            <video
+              ref={mediaStream}
+              autoPlay
+              playsInline
+              style={{ display: "block", width: "100%", height: "auto" }}
+            />
+            
+            <button
+              className="absolute top-2 right-2 w-7 h-7 bg-black/50 hover:bg-red-600 text-white rounded-full flex items-center justify-center text-xs transition-all"
+              title="종료"
+              onClick={() => stopAvatar()}
+            >
+              ✕
+            </button>
+
+            <div className="absolute bottom-2 left-2 flex items-center gap-2">
+              <div className={`w-3 h-3 rounded-full ${isListening ? 'bg-red-500 animate-pulse' : isLoading ? 'bg-yellow-500' : 'bg-green-500'}`} />
+              <span className="text-white text-xs bg-black/50 px-2 py-1 rounded">
+                {isListening ? '듣는 중...' : isLoading ? '응답 생성 중...' : '말씀하세요'}
+              </span>
+            </div>
+          </div>
+
+          <div className="p-2 bg-zinc-800 border-t border-zinc-700">
+            <div className="flex gap-2">
+              <input
+                className="flex-1 px-3 py-2 bg-zinc-700 text-white text-sm rounded-lg border border-zinc-600 focus:outline-none focus:border-purple-500 disabled:opacity-50"
+                disabled={isLoading}
+                placeholder="또는 텍스트로 질문하세요..."
+                type="text"
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                onKeyPress={handleKeyPress}
+              />
+              <button
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-zinc-600 text-white text-sm rounded-lg transition-colors"
+                disabled={isLoading || !inputText.trim()}
+                onClick={() => handleSendMessage()}
+              >
+                {isLoading ? "..." : "전송"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="w-full h-full flex items-center justify-center bg-zinc-900">
+          {sessionState === StreamingAvatarSessionState.CONNECTING ? (
+            <div className="flex flex-col items-center gap-3 text-white">
+              <div className="w-10 h-10 border-4 border-purple-500 border-t-transparent rounded-full animate-spin" />
+              <span className="text-lg">연결 중...</span>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-3 text-white">
+              <span className="text-lg">🎮 게임을 시작하면</span>
+              <span className="text-lg">AI 도우미가 나타나요!</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function InteractiveAvatarWrapper() {
+  return (
+    <StreamingAvatarProvider basePath={process.env.NEXT_PUBLIC_BASE_API_URL}>
+      <InteractiveAvatar />
+    </StreamingAvatarProvider>
+  );
+}

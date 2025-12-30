@@ -158,6 +158,12 @@ async function callDBAPI(action: string, params: Record<string, string> = {}): P
 async function executeFunction(name: string, args: any): Promise<string> {
   console.log(`🔧 Function 호출: ${name}`, args);
   
+  // 🆕 "님" 접미사 제거 (OpenAI가 붙여서 보내는 경우 대비)
+  if (args.player_name) {
+    args.player_name = args.player_name.replace(/님$/, '').trim();
+    console.log(`🔧 이름 정제: ${args.player_name}`);
+  }
+  
   switch (name) {
     case "get_user_stats": {
       const result = await callDBAPI("get_stats", { player_name: args.player_name });

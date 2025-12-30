@@ -338,6 +338,9 @@ function InteractiveAvatar() {
       return;
     }
     
+    // 🆕 speak 호출 전에 미리 VAD 차단 (이벤트 딜레이 대비)
+    isAvatarTalkingRef.current = true;
+    
     try {
       console.log("Calling avatar.speak()...");
       await avatarRef.current.speak({
@@ -347,6 +350,8 @@ function InteractiveAvatar() {
       console.log("Speak successful!");
     } catch (error) {
       console.error("Avatar speak error:", error);
+      // 에러 시 VAD 다시 활성화
+      isAvatarTalkingRef.current = false;
     }
   };
 

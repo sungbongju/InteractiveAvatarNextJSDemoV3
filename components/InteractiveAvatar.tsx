@@ -82,6 +82,9 @@ function InteractiveAvatar() {
     }
   }
 
+  // ============================================
+  // 🔧 수정된 부분: userName과 userStats를 API에 전달
+  // ============================================
   const callOpenAI = async (message: string, history: ChatMessage[]) => {
     try {
       const response = await fetch("/api/chat", {
@@ -90,6 +93,9 @@ function InteractiveAvatar() {
         body: JSON.stringify({
           message: message,
           history: history,
+          // 🆕 사용자 정보를 API에 전달!
+          userName: userNameRef.current,
+          userStats: userStatsRef.current,
         }),
       });
       const data = await response.json();
@@ -133,6 +139,7 @@ function InteractiveAvatar() {
     const newHistory = [...chatHistory, { role: "user" as const, content: transcript }];
     setChatHistory(newHistory);
     
+    // 🔧 callOpenAI가 이제 userName과 userStats를 함께 전송함
     const reply = await callOpenAI(transcript, chatHistory);
     console.log("OpenAI reply:", reply);
     
@@ -160,7 +167,7 @@ function InteractiveAvatar() {
         
         if (!hasGreetedRef.current) {
           try {
-            // 🆕 마이크 권한만 먼저 획득
+            // 마이크 권한 먼저 획득
             try {
               const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
               console.log("🎤 마이크 권한 획득!");
@@ -194,12 +201,14 @@ function InteractiveAvatar() {
                 greeting += `처음 오셨군요! 즐겁게 게임하시고 두뇌 건강을 지켜봐요!`;
               }
               
-              greeting += ` 도움이 필요하시면 언제든 말씀해주세요.`;
+              greeting += ` 게임 방법이나 성적이 궁금하시면 언제든 물어보세요!`;
             } else {
               greeting = "안녕하세요! 저는 치매 예방 게임 도우미입니다. 도움이 필요하시다면 언제든지 말씀해주세요.";
             }
 
             console.log("Sending greeting...");
+            console.log("🔧 현재 저장된 stats:", userStatsRef.current); // 디버그용
+            
             await new Promise<void>((resolve) => {
               const onStopTalking = () => {
                 console.log("🎤 아바타 말 끝남!");
@@ -215,7 +224,7 @@ function InteractiveAvatar() {
 
             await new Promise(resolve => setTimeout(resolve, 2000));
 
-            // 🆕 greeting 끝난 후에 voice chat 시작!
+            // greeting 끝난 후에 voice chat 시작
             console.log("Starting voice chat...");
             await avatarInstance.startVoiceChat();
             console.log("🎤 Voice chat 시작 - 마이크 준비 완료!");
@@ -269,6 +278,7 @@ function InteractiveAvatar() {
     const newHistory = [...chatHistory, { role: "user" as const, content: textToSend }];
     setChatHistory(newHistory);
 
+    // 🔧 callOpenAI가 이제 userName과 userStats를 함께 전송함
     const reply = await callOpenAI(textToSend, chatHistory);
 
     setChatHistory([...newHistory, { role: "assistant" as const, content: reply }]);
@@ -311,11 +321,11 @@ function InteractiveAvatar() {
         }
         if (event.data.stats) {
           userStatsRef.current = event.data.stats;
-          console.log('📥 stats:', event.data.stats);
+          console.log('📥 stats 저장됨:', event.data.stats);
         }
         startSession();
       }
-      // useEffect 안에 추가
+      
       if (event.data && event.data.type === 'EXPLAIN_GAME') {
         const game = event.data.game;
         const explanation = gameExplanations[game];

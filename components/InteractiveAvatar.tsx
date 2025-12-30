@@ -67,6 +67,7 @@ function InteractiveAvatar() {
   const hasStartedRef = useRef(false);
   const userNameRef = useRef<string>('');
   const userStatsRef = useRef<any>(null);
+  const isAvatarTalkingRef = useRef(false);  // 🆕 아바타 말하는 중 체크
   
   // 🆕 Whisper STT + VAD 관련
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -147,7 +148,7 @@ function InteractiveAvatar() {
     
     vadIntervalRef.current = setInterval(() => {
       // 처리 중이거나 아바타가 말하는 중이면 무시
-      if (isProcessingRef.current || isLoading) {
+      if (isProcessingRef.current || isLoading || isAvatarTalkingRef.current) {
         return;
       }
 
@@ -428,6 +429,17 @@ function InteractiveAvatar() {
         cleanupMicAndVAD();
         hasGreetedRef.current = false;
         hasStartedRef.current = false;
+      });
+
+      // 🆕 아바타 말하기 시작/끝 감지
+      avatarInstance.on(StreamingEvents.AVATAR_START_TALKING, () => {
+        console.log("🗣️ 아바타 말하기 시작 - VAD 일시 중지");
+        isAvatarTalkingRef.current = true;
+      });
+
+      avatarInstance.on(StreamingEvents.AVATAR_STOP_TALKING, () => {
+        console.log("🔇 아바타 말하기 끝 - VAD 재개");
+        isAvatarTalkingRef.current = false;
       });
 
       await startAvatar(config);

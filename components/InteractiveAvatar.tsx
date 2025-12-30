@@ -51,12 +51,18 @@ function InteractiveAvatar() {
   const [isLoading, setIsLoading] = useState(false);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [isListening, setIsListening] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
   const mediaStream = useRef<HTMLVideoElement>(null);
   const isProcessingRef = useRef(false);
   const hasGreetedRef = useRef(false);
   const hasStartedRef = useRef(false);
   const userNameRef = useRef<string>('');
   const userStatsRef = useRef<any>(null);
+  
+  // 🆕 Whisper STT 관련
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const micStreamRef = useRef<MediaStream | null>(null);
 
   async function fetchAccessToken() {
     try {
@@ -73,7 +79,102 @@ function InteractiveAvatar() {
   }
 
   // ============================================
-  // 🆕 통합 API 호출 함수
+  // 🆕 Whisper STT 함수
+  // ============================================
+  const transcribeWithWhisper = async (audioBlob: Blob): Promise<string> => {
+    try {
+      console.log("🎤 Whisper로 변환 중...", audioBlob.size, "bytes");
+      
+      const formData = new FormData();
+      formData.append("audio", audioBlob, "recording.webm");
+
+      const response = await fetch("/api/whisper", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await response.json();
+      
+      if (data.error) {
+        console.error("Whisper 에러:", data.error);
+        return "";
+      }
+      
+      console.log("🎤 Whisper 결과:", data.text);
+      return data.text || "";
+    } catch (error) {
+      console.error("Whisper API 호출 실패:", error);
+      return "";
+    }
+  };
+
+  const startRecording = async () => {
+    try {
+      // 이미 녹음 중이면 무시
+      if (isRecording || mediaRecorderRef.current?.state === "recording") {
+        return;
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micStreamRef.current = stream;
+      
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: "audio/webm",
+      });
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        
+        // 너무 짧은 녹음 무시 (0.5초 미만)
+        if (audioBlob.size < 5000) {
+          console.log("녹음이 너무 짧음, 무시");
+          setIsRecording(false);
+          return;
+        }
+
+        // Whisper로 텍스트 변환
+        const transcript = await transcribeWithWhisper(audioBlob);
+        
+        if (transcript && transcript.trim()) {
+          await handleUserSpeech(transcript);
+        }
+        
+        setIsRecording(false);
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setIsListening(true);
+      console.log("🎤 녹음 시작!");
+    } catch (error) {
+      console.error("마이크 접근 실패:", error);
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+      mediaRecorderRef.current.stop();
+      console.log("🎤 녹음 중지!");
+    }
+    
+    // 마이크 스트림 정리
+    if (micStreamRef.current) {
+      micStreamRef.current.getTracks().forEach(track => track.stop());
+    }
+    
+    setIsListening(false);
+  };
+
+  // ============================================
+  // API 호출 함수
   // ============================================
   const callChatAPI = async (
     type: "greeting" | "game_explain" | "chat",
@@ -137,7 +238,6 @@ function InteractiveAvatar() {
     const newHistory = [...chatHistory, { role: "user" as const, content: transcript }];
     setChatHistory(newHistory);
     
-    // 🆕 type: "chat"으로 일반 대화 요청
     const reply = await callChatAPI("chat", { 
       message: transcript, 
       history: chatHistory 
@@ -179,7 +279,6 @@ function InteractiveAvatar() {
 
             await new Promise(resolve => setTimeout(resolve, 1500));
             
-            // 🆕 인사말을 API에서 생성!
             console.log("🔧 인사말 요청 중...");
             console.log("🔧 현재 저장된 userName:", userNameRef.current);
             console.log("🔧 현재 저장된 stats:", userStatsRef.current);
@@ -200,12 +299,9 @@ function InteractiveAvatar() {
             setChatHistory([{ role: "assistant", content: greeting }]);
             console.log("Greeting sent successfully!");
 
-            await new Promise(resolve => setTimeout(resolve, 2000));
-
-            // greeting 끝난 후에 voice chat 시작
-            console.log("Starting voice chat...");
-            await avatarInstance.startVoiceChat();
-            console.log("🎤 Voice chat 시작 - 마이크 준비 완료!");
+            // 🆕 HeyGen voice chat 대신 Whisper STT 사용
+            // await avatarInstance.startVoiceChat(); // 제거!
+            console.log("🎤 Whisper STT 모드 - 마이크 버튼을 눌러 말씀하세요!");
             
             hasGreetedRef.current = true;
           } catch (error) {
@@ -220,23 +316,10 @@ function InteractiveAvatar() {
         hasStartedRef.current = false;
       });
 
-      avatarInstance.on(StreamingEvents.USER_START, () => {
-        console.log("User started speaking");
-        setIsListening(true);
-      });
-
-      avatarInstance.on(StreamingEvents.USER_STOP, () => {
-        console.log("User stopped speaking");
-        setIsListening(false);
-      });
-
-      avatarInstance.on(StreamingEvents.USER_END_MESSAGE, (event) => {
-        const finalMessage = event.detail?.message;
-        console.log("User final message:", finalMessage);
-        if (finalMessage && finalMessage.trim()) {
-          handleUserSpeech(finalMessage);
-        }
-      });
+      // 🆕 HeyGen STT 이벤트 제거 (우리가 직접 처리)
+      // avatarInstance.on(StreamingEvents.USER_START, ...);
+      // avatarInstance.on(StreamingEvents.USER_STOP, ...);
+      // avatarInstance.on(StreamingEvents.USER_END_MESSAGE, ...);
 
       await startAvatar(config);
       
@@ -256,7 +339,6 @@ function InteractiveAvatar() {
     const newHistory = [...chatHistory, { role: "user" as const, content: textToSend }];
     setChatHistory(newHistory);
 
-    // 🆕 type: "chat"으로 일반 대화 요청
     const reply = await callChatAPI("chat", {
       message: textToSend,
       history: chatHistory
@@ -276,8 +358,18 @@ function InteractiveAvatar() {
     }
   };
 
+  // 🆕 마이크 버튼 토글
+  const handleMicToggle = () => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  };
+
   useUnmount(() => {
     stopAvatar();
+    stopRecording();
     hasGreetedRef.current = false;
     hasStartedRef.current = false;
   });
@@ -307,7 +399,6 @@ function InteractiveAvatar() {
         startSession();
       }
       
-      // 🆕 게임 설명도 API에서 생성!
       if (event.data && event.data.type === 'EXPLAIN_GAME') {
         const game = event.data.game;
         console.log('📥 게임 설명 요청:', game);
@@ -354,15 +445,29 @@ function InteractiveAvatar() {
             </button>
 
             <div className="absolute bottom-2 left-2 flex items-center gap-2">
-              <div className={`w-3 h-3 rounded-full ${isListening ? 'bg-red-500 animate-pulse' : isLoading ? 'bg-yellow-500' : 'bg-green-500'}`} />
+              <div className={`w-3 h-3 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : isLoading ? 'bg-yellow-500' : 'bg-green-500'}`} />
               <span className="text-white text-xs bg-black/50 px-2 py-1 rounded">
-                {isListening ? '듣는 중...' : isLoading ? '응답 생성 중...' : '말씀하세요'}
+                {isRecording ? '듣는 중...' : isLoading ? '응답 생성 중...' : '마이크 버튼을 눌러 말씀하세요'}
               </span>
             </div>
           </div>
 
           <div className="p-2 bg-zinc-800 border-t border-zinc-700">
             <div className="flex gap-2">
+              {/* 🆕 마이크 버튼 */}
+              <button
+                className={`px-4 py-2 rounded-lg transition-colors ${
+                  isRecording 
+                    ? 'bg-red-600 hover:bg-red-700 animate-pulse' 
+                    : 'bg-blue-600 hover:bg-blue-700'
+                } text-white disabled:bg-zinc-600`}
+                disabled={isLoading}
+                onClick={handleMicToggle}
+                title={isRecording ? "녹음 중지" : "음성 입력"}
+              >
+                {isRecording ? "🎤 중지" : "🎤"}
+              </button>
+              
               <input
                 className="flex-1 px-3 py-2 bg-zinc-700 text-white text-sm rounded-lg border border-zinc-600 focus:outline-none focus:border-purple-500 disabled:opacity-50"
                 disabled={isLoading}

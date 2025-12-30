@@ -28,7 +28,6 @@ const DEFAULT_CONFIG: StartAvatarRequest = {
   voiceChatTransport: VoiceChatTransport.WEBSOCKET,
   sttSettings: {
     provider: STTProvider.DEEPGRAM,
-    language: "ko",
   },
 };
 
@@ -205,7 +204,9 @@ function InteractiveAvatar() {
 
             // greeting 끝난 후에 voice chat 시작
             console.log("Starting voice chat...");
-            await avatarInstance.startVoiceChat();
+            await avatarInstance.startVoiceChat({
+              useSilencePrompt: false,
+            });
             console.log("🎤 Voice chat 시작 - 마이크 준비 완료!");
             
             hasGreetedRef.current = true;

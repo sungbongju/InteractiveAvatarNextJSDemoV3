@@ -36,6 +36,14 @@ interface ChatMessage {
   content: string;
 }
 
+// VAD 설정
+const VAD_CONFIG = {
+  SILENCE_THRESHOLD: 0.01,      // 침묵 판단 기준 (낮을수록 민감)
+  SPEECH_THRESHOLD: 0.02,       // 말하기 시작 판단 기준
+  SILENCE_DURATION: 1500,       // 침묵 지속 시간 (ms) 후 녹음 중지
+  MIN_RECORDING_TIME: 500,      // 최소 녹음 시간 (ms)
+};
+
 function InteractiveAvatar() {
   const {
     initAvatar,
@@ -52,6 +60,7 @@ function InteractiveAvatar() {
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [isListening, setIsListening] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [micEnabled, setMicEnabled] = useState(false);
   const mediaStream = useRef<HTMLVideoElement>(null);
   const isProcessingRef = useRef(false);
   const hasGreetedRef = useRef(false);
@@ -59,10 +68,16 @@ function InteractiveAvatar() {
   const userNameRef = useRef<string>('');
   const userStatsRef = useRef<any>(null);
   
-  // 🆕 Whisper STT 관련
+  // 🆕 Whisper STT + VAD 관련
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const micStreamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const vadIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const silenceStartRef = useRef<number | null>(null);
+  const recordingStartRef = useRef<number | null>(null);
+  const isVadActiveRef = useRef(false);
 
   async function fetchAccessToken() {
     try {
@@ -108,21 +123,84 @@ function InteractiveAvatar() {
     }
   };
 
-  const startRecording = async () => {
-    try {
-      // 이미 녹음 중이면 무시
-      if (isRecording || mediaRecorderRef.current?.state === "recording") {
+  // ============================================
+  // 🆕 VAD (Voice Activity Detection) 함수들
+  // ============================================
+  const getAudioLevel = (): number => {
+    if (!analyserRef.current) return 0;
+    
+    const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+    analyserRef.current.getByteFrequencyData(dataArray);
+    
+    // 평균 음량 계산
+    const sum = dataArray.reduce((a, b) => a + b, 0);
+    const average = sum / dataArray.length / 255; // 0~1 범위로 정규화
+    
+    return average;
+  };
+
+  const startVAD = () => {
+    if (vadIntervalRef.current) return;
+    
+    isVadActiveRef.current = true;
+    
+    vadIntervalRef.current = setInterval(() => {
+      // 처리 중이거나 아바타가 말하는 중이면 무시
+      if (isProcessingRef.current || isLoading) {
         return;
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      micStreamRef.current = stream;
+      const level = getAudioLevel();
       
-      const mediaRecorder = new MediaRecorder(stream, {
+      if (!isRecording) {
+        // 녹음 중 아닐 때: 음성 감지되면 녹음 시작
+        if (level > VAD_CONFIG.SPEECH_THRESHOLD) {
+          console.log("🎤 음성 감지! 녹음 시작", level.toFixed(3));
+          startRecording();
+        }
+      } else {
+        // 녹음 중일 때: 침묵 감지되면 녹음 중지
+        if (level < VAD_CONFIG.SILENCE_THRESHOLD) {
+          if (!silenceStartRef.current) {
+            silenceStartRef.current = Date.now();
+          } else {
+            const silenceDuration = Date.now() - silenceStartRef.current;
+            const recordingDuration = Date.now() - (recordingStartRef.current || 0);
+            
+            // 최소 녹음 시간 이상이고, 침묵이 일정 시간 지속되면 중지
+            if (recordingDuration > VAD_CONFIG.MIN_RECORDING_TIME && 
+                silenceDuration > VAD_CONFIG.SILENCE_DURATION) {
+              console.log("🔇 침묵 감지! 녹음 중지");
+              stopRecording();
+            }
+          }
+        } else {
+          // 소리가 나면 침묵 타이머 리셋
+          silenceStartRef.current = null;
+        }
+      }
+    }, 100); // 100ms마다 체크
+  };
+
+  const stopVAD = () => {
+    if (vadIntervalRef.current) {
+      clearInterval(vadIntervalRef.current);
+      vadIntervalRef.current = null;
+    }
+    isVadActiveRef.current = false;
+  };
+
+  const startRecording = () => {
+    if (!micStreamRef.current || isRecording) return;
+    
+    try {
+      const mediaRecorder = new MediaRecorder(micStreamRef.current, {
         mimeType: "audio/webm",
       });
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
+      recordingStartRef.current = Date.now();
+      silenceStartRef.current = null;
 
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
@@ -133,8 +211,8 @@ function InteractiveAvatar() {
       mediaRecorder.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
         
-        // 너무 짧은 녹음 무시 (0.5초 미만)
-        if (audioBlob.size < 5000) {
+        // 너무 짧은 녹음 무시
+        if (audioBlob.size < 3000) {
           console.log("녹음이 너무 짧음, 무시");
           setIsRecording(false);
           return;
@@ -153,24 +231,60 @@ function InteractiveAvatar() {
       mediaRecorder.start();
       setIsRecording(true);
       setIsListening(true);
-      console.log("🎤 녹음 시작!");
     } catch (error) {
-      console.error("마이크 접근 실패:", error);
+      console.error("녹음 시작 실패:", error);
     }
   };
 
   const stopRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
       mediaRecorderRef.current.stop();
-      console.log("🎤 녹음 중지!");
     }
+    setIsListening(false);
+    silenceStartRef.current = null;
+  };
+
+  // ============================================
+  // 🆕 마이크 + VAD 초기화
+  // ============================================
+  const initMicAndVAD = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micStreamRef.current = stream;
+      
+      // AudioContext 설정
+      audioContextRef.current = new AudioContext();
+      const source = audioContextRef.current.createMediaStreamSource(stream);
+      analyserRef.current = audioContextRef.current.createAnalyser();
+      analyserRef.current.fftSize = 256;
+      source.connect(analyserRef.current);
+      
+      setMicEnabled(true);
+      console.log("🎤 마이크 + VAD 초기화 완료!");
+      
+      // VAD 시작
+      startVAD();
+      
+    } catch (error) {
+      console.error("마이크 초기화 실패:", error);
+    }
+  };
+
+  const cleanupMicAndVAD = () => {
+    stopVAD();
+    stopRecording();
     
-    // 마이크 스트림 정리
     if (micStreamRef.current) {
       micStreamRef.current.getTracks().forEach(track => track.stop());
+      micStreamRef.current = null;
     }
     
-    setIsListening(false);
+    if (audioContextRef.current) {
+      audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+    
+    setMicEnabled(false);
   };
 
   // ============================================
@@ -268,15 +382,6 @@ function InteractiveAvatar() {
         
         if (!hasGreetedRef.current) {
           try {
-            // 마이크 권한 먼저 획득
-            try {
-              const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-              console.log("🎤 마이크 권한 획득!");
-              micStream.getTracks().forEach(track => track.stop());
-            } catch (e) {
-              console.error("❌ 마이크 권한 실패:", e);
-            }
-
             await new Promise(resolve => setTimeout(resolve, 1500));
             
             console.log("🔧 인사말 요청 중...");
@@ -299,9 +404,9 @@ function InteractiveAvatar() {
             setChatHistory([{ role: "assistant", content: greeting }]);
             console.log("Greeting sent successfully!");
 
-            // 🆕 HeyGen voice chat 대신 Whisper STT 사용
-            // await avatarInstance.startVoiceChat(); // 제거!
-            console.log("🎤 Whisper STT 모드 - 마이크 버튼을 눌러 말씀하세요!");
+            // 🆕 마이크 + VAD 초기화 (인사 후)
+            await initMicAndVAD();
+            console.log("🎤 음성 인식 준비 완료! 말씀하시면 자동으로 인식합니다.");
             
             hasGreetedRef.current = true;
           } catch (error) {
@@ -312,14 +417,10 @@ function InteractiveAvatar() {
       
       avatarInstance.on(StreamingEvents.STREAM_DISCONNECTED, () => {
         console.log("Stream disconnected");
+        cleanupMicAndVAD();
         hasGreetedRef.current = false;
         hasStartedRef.current = false;
       });
-
-      // 🆕 HeyGen STT 이벤트 제거 (우리가 직접 처리)
-      // avatarInstance.on(StreamingEvents.USER_START, ...);
-      // avatarInstance.on(StreamingEvents.USER_STOP, ...);
-      // avatarInstance.on(StreamingEvents.USER_END_MESSAGE, ...);
 
       await startAvatar(config);
       
@@ -358,18 +459,9 @@ function InteractiveAvatar() {
     }
   };
 
-  // 🆕 마이크 버튼 토글
-  const handleMicToggle = () => {
-    if (isRecording) {
-      stopRecording();
-    } else {
-      startRecording();
-    }
-  };
-
   useUnmount(() => {
     stopAvatar();
-    stopRecording();
+    cleanupMicAndVAD();
     hasGreetedRef.current = false;
     hasStartedRef.current = false;
   });
@@ -378,6 +470,7 @@ function InteractiveAvatar() {
     const handleMessage = async (event: MessageEvent) => {
       if (event.data && event.data.type === 'RESET_AVATAR') {
         console.log('📥 아바타 리셋 신호 받음!');
+        cleanupMicAndVAD();
         hasStartedRef.current = false;
         hasGreetedRef.current = false;
         userNameRef.current = '';
@@ -445,29 +538,21 @@ function InteractiveAvatar() {
             </button>
 
             <div className="absolute bottom-2 left-2 flex items-center gap-2">
-              <div className={`w-3 h-3 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : isLoading ? 'bg-yellow-500' : 'bg-green-500'}`} />
+              <div className={`w-3 h-3 rounded-full ${
+                isRecording ? 'bg-red-500 animate-pulse' : 
+                isLoading ? 'bg-yellow-500' : 
+                micEnabled ? 'bg-green-500' : 'bg-gray-500'
+              }`} />
               <span className="text-white text-xs bg-black/50 px-2 py-1 rounded">
-                {isRecording ? '듣는 중...' : isLoading ? '응답 생성 중...' : '마이크 버튼을 눌러 말씀하세요'}
+                {isRecording ? '🎤 듣는 중...' : 
+                 isLoading ? '응답 생성 중...' : 
+                 micEnabled ? '말씀하세요' : '마이크 준비 중...'}
               </span>
             </div>
           </div>
 
           <div className="p-2 bg-zinc-800 border-t border-zinc-700">
             <div className="flex gap-2">
-              {/* 🆕 마이크 버튼 */}
-              <button
-                className={`px-4 py-2 rounded-lg transition-colors ${
-                  isRecording 
-                    ? 'bg-red-600 hover:bg-red-700 animate-pulse' 
-                    : 'bg-blue-600 hover:bg-blue-700'
-                } text-white disabled:bg-zinc-600`}
-                disabled={isLoading}
-                onClick={handleMicToggle}
-                title={isRecording ? "녹음 중지" : "음성 입력"}
-              >
-                {isRecording ? "🎤 중지" : "🎤"}
-              </button>
-              
               <input
                 className="flex-1 px-3 py-2 bg-zinc-700 text-white text-sm rounded-lg border border-zinc-600 focus:outline-none focus:border-purple-500 disabled:opacity-50"
                 disabled={isLoading}

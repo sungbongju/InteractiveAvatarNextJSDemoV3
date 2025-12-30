@@ -204,9 +204,7 @@ function InteractiveAvatar() {
 
             // greeting 끝난 후에 voice chat 시작
             console.log("Starting voice chat...");
-            await avatarInstance.startVoiceChat({
-              useSilencePrompt: false,
-            });
+            await avatarInstance.startVoiceChat();
             console.log("🎤 Voice chat 시작 - 마이크 준비 완료!");
             
             hasGreetedRef.current = true;

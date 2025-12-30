@@ -31,16 +31,6 @@ const DEFAULT_CONFIG: StartAvatarRequest = {
   },
 };
 
-// 게임별 설명 텍스트
-const gameExplanations: { [key: string]: string } = {
-  hwatu: "화투 짝맞추기 게임이에요! 뒤집어진 카드 중에서 같은 그림을 찾아 짝을 맞추면 됩니다. 기억력에 좋아요!",
-  yut: "윷놀이입니다! 윷을 던져서 나온 결과만큼 말을 움직여 도착점까지 가면 됩니다. 행운을 빌어요!",
-  memory: "숫자 기억하기 게임이에요! 화면에 나타나는 숫자를 잘 보고 기억한 다음, 똑같이 입력하면 됩니다.",
-  proverb: "속담 완성하기 게임입니다! 빈 칸에 들어갈 알맞은 말을 골라 속담을 완성해보세요.",
-  calc: "산수 계산 게임이에요! 간단한 덧셈과 뺄셈 문제를 풀어보세요. 천천히 하셔도 괜찮아요!",
-  sequence: "순서 맞추기 게임입니다! 그림들을 올바른 순서대로 클릭해서 배열해보세요."
-};
-
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
@@ -83,17 +73,25 @@ function InteractiveAvatar() {
   }
 
   // ============================================
-  // 🔧 수정된 부분: userName과 userStats를 API에 전달
+  // 🆕 통합 API 호출 함수
   // ============================================
-  const callOpenAI = async (message: string, history: ChatMessage[]) => {
+  const callChatAPI = async (
+    type: "greeting" | "game_explain" | "chat",
+    options: {
+      message?: string;
+      history?: ChatMessage[];
+      game?: string;
+    } = {}
+  ) => {
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: message,
-          history: history,
-          // 🆕 사용자 정보를 API에 전달!
+          type: type,
+          message: options.message || '',
+          history: options.history || [],
+          game: options.game || '',
           userName: userNameRef.current,
           userStats: userStatsRef.current,
         }),
@@ -101,8 +99,8 @@ function InteractiveAvatar() {
       const data = await response.json();
       return data.reply;
     } catch (error) {
-      console.error("OpenAI API error:", error);
-      return "죄송합니다. 일시적인 오류가 발생했습니다. 다시 말씀해 주세요.";
+      console.error("Chat API error:", error);
+      return "죄송합니다. 일시적인 오류가 발생했습니다.";
     }
   };
 
@@ -139,9 +137,12 @@ function InteractiveAvatar() {
     const newHistory = [...chatHistory, { role: "user" as const, content: transcript }];
     setChatHistory(newHistory);
     
-    // 🔧 callOpenAI가 이제 userName과 userStats를 함께 전송함
-    const reply = await callOpenAI(transcript, chatHistory);
-    console.log("OpenAI reply:", reply);
+    // 🆕 type: "chat"으로 일반 대화 요청
+    const reply = await callChatAPI("chat", { 
+      message: transcript, 
+      history: chatHistory 
+    });
+    console.log("API reply:", reply);
     
     setChatHistory([...newHistory, { role: "assistant" as const, content: reply }]);
     
@@ -178,37 +179,14 @@ function InteractiveAvatar() {
 
             await new Promise(resolve => setTimeout(resolve, 1500));
             
-            let greeting = '';
-            const name = userNameRef.current;
-            const stats = userStatsRef.current;
+            // 🆕 인사말을 API에서 생성!
+            console.log("🔧 인사말 요청 중...");
+            console.log("🔧 현재 저장된 userName:", userNameRef.current);
+            console.log("🔧 현재 저장된 stats:", userStatsRef.current);
             
-            if (name) {
-              greeting = `안녕하세요 ${name}님! 저는 치매 예방 게임 도우미입니다. `;
-              
-              if (stats && stats.best_score) {
-                const bestScore = parseInt(stats.best_score);
-                
-                if (bestScore >= 500) {
-                  greeting += `지난번 최고 점수가 ${bestScore}점으로 정말 훌륭하셨어요! 오늘도 좋은 기록 유지해보아요!`;
-                } else if (bestScore >= 400) {
-                  greeting += `지난번 최고 점수가 ${bestScore}점이셨네요. 오늘은 더 높은 점수에 도전해봐요!`;
-                } else if (bestScore >= 300) {
-                  greeting += `지난번 최고 점수가 ${bestScore}점이셨어요. 오늘은 점수를 더 높여봅시다!`;
-                } else {
-                  greeting += `오늘 좋은 기록을 만들어봐요! 화이팅!`;
-                }
-              } else {
-                greeting += `처음 오셨군요! 즐겁게 게임하시고 두뇌 건강을 지켜봐요!`;
-              }
-              
-              greeting += ` 게임 방법이나 성적이 궁금하시면 언제든 물어보세요!`;
-            } else {
-              greeting = "안녕하세요! 저는 치매 예방 게임 도우미입니다. 도움이 필요하시다면 언제든지 말씀해주세요.";
-            }
+            const greeting = await callChatAPI("greeting");
+            console.log("🔧 생성된 인사말:", greeting);
 
-            console.log("Sending greeting...");
-            console.log("🔧 현재 저장된 stats:", userStatsRef.current); // 디버그용
-            
             await new Promise<void>((resolve) => {
               const onStopTalking = () => {
                 console.log("🎤 아바타 말 끝남!");
@@ -278,8 +256,11 @@ function InteractiveAvatar() {
     const newHistory = [...chatHistory, { role: "user" as const, content: textToSend }];
     setChatHistory(newHistory);
 
-    // 🔧 callOpenAI가 이제 userName과 userStats를 함께 전송함
-    const reply = await callOpenAI(textToSend, chatHistory);
+    // 🆕 type: "chat"으로 일반 대화 요청
+    const reply = await callChatAPI("chat", {
+      message: textToSend,
+      history: chatHistory
+    });
 
     setChatHistory([...newHistory, { role: "assistant" as const, content: reply }]);
 
@@ -302,7 +283,7 @@ function InteractiveAvatar() {
   });
 
   useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
+    const handleMessage = async (event: MessageEvent) => {
       if (event.data && event.data.type === 'RESET_AVATAR') {
         console.log('📥 아바타 리셋 신호 받음!');
         hasStartedRef.current = false;
@@ -326,10 +307,14 @@ function InteractiveAvatar() {
         startSession();
       }
       
+      // 🆕 게임 설명도 API에서 생성!
       if (event.data && event.data.type === 'EXPLAIN_GAME') {
         const game = event.data.game;
-        const explanation = gameExplanations[game];
-        if (explanation && avatarRef.current) {
+        console.log('📥 게임 설명 요청:', game);
+        
+        if (avatarRef.current) {
+          const explanation = await callChatAPI("game_explain", { game: game });
+          console.log('🔧 생성된 게임 설명:', explanation);
           speakWithAvatar(explanation);
         }
       }

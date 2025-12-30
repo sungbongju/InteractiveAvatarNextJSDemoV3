@@ -78,6 +78,7 @@ function InteractiveAvatar() {
   const silenceStartRef = useRef<number | null>(null);
   const recordingStartRef = useRef<number | null>(null);
   const isVadActiveRef = useRef(false);
+  const isRecordingRef = useRef(false);  // 🆕 동기 체크용
 
   async function fetchAccessToken() {
     try {
@@ -152,7 +153,7 @@ function InteractiveAvatar() {
 
       const level = getAudioLevel();
       
-      if (!isRecording) {
+      if (!isRecordingRef.current) {
         // 녹음 중 아닐 때: 음성 감지되면 녹음 시작
         if (level > VAD_CONFIG.SPEECH_THRESHOLD) {
           console.log("🎤 음성 감지! 녹음 시작", level.toFixed(3));
@@ -191,7 +192,10 @@ function InteractiveAvatar() {
   };
 
   const startRecording = () => {
-    if (!micStreamRef.current || isRecording) return;
+    // 🆕 ref로 동기 체크
+    if (!micStreamRef.current || isRecordingRef.current) return;
+    
+    isRecordingRef.current = true;  // 🆕 즉시 설정
     
     try {
       const mediaRecorder = new MediaRecorder(micStreamRef.current, {
@@ -214,6 +218,7 @@ function InteractiveAvatar() {
         // 너무 짧은 녹음 무시
         if (audioBlob.size < 3000) {
           console.log("녹음이 너무 짧음, 무시");
+          isRecordingRef.current = false;
           setIsRecording(false);
           return;
         }
@@ -225,6 +230,7 @@ function InteractiveAvatar() {
           await handleUserSpeech(transcript);
         }
         
+        isRecordingRef.current = false;
         setIsRecording(false);
       };
 
@@ -233,6 +239,7 @@ function InteractiveAvatar() {
       setIsListening(true);
     } catch (error) {
       console.error("녹음 시작 실패:", error);
+      isRecordingRef.current = false;
     }
   };
 
@@ -240,6 +247,7 @@ function InteractiveAvatar() {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
       mediaRecorderRef.current.stop();
     }
+    isRecordingRef.current = false;  // 🆕 즉시 설정
     setIsListening(false);
     silenceStartRef.current = null;
   };

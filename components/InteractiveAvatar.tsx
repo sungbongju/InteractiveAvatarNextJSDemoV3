@@ -265,16 +265,19 @@ function InteractiveAvatar() {
       });
 
       // 🎯 핵심: USER_END_MESSAGE에서 저장된 transcript 처리
-      avatarInstance.on(StreamingEvents.USER_END_MESSAGE, (event) => {
-        console.log("🎤 USER_END_MESSAGE - 저장된 transcript:", lastTranscriptRef.current);
-        
+      avatarInstance.on(StreamingEvents.USER_END_MESSAGE, () => {
+        console.log(
+          "🎤 USER_END_MESSAGE - 저장된 transcript:",
+          lastTranscriptRef.current
+        );
+
         const finalMessage = lastTranscriptRef.current;
         if (finalMessage && finalMessage.trim()) {
           handleUserSpeech(finalMessage);
         }
-        
+
         // 처리 후 초기화
-        lastTranscriptRef.current = '';
+        lastTranscriptRef.current = "";
       });
 
       // 아바타 시작
@@ -283,9 +286,7 @@ function InteractiveAvatar() {
       // 🎯 Voice Chat 시작 (HeyGen Deepgram STT 사용)
       console.log("🎤 Voice Chat 시작 시도...");
       try {
-        await avatarInstance.startVoiceChat({
-          useSilencePrompt: false,
-        });
+        await avatarInstance.startVoiceChat();
         console.log("🎤 Voice Chat 시작 성공!");
       } catch (vcError) {
         console.error("🎤 Voice Chat 시작 실패:", vcError);

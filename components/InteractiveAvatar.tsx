@@ -1,3 +1,20 @@
+/**
+ * ================================================
+ * 🎯 InteractiveAvatar.tsx - 치매 예방 게임 AI 아바타
+ * ================================================
+ * 
+ * ✅ HeyGen Voice Chat (Deepgram STT) 사용
+ * ✅ Whisper 제거 → 교수님 방식으로 변경
+ * 
+ * 흐름:
+ * 1. HeyGen Voice Chat이 음성을 텍스트로 변환
+ * 2. USER_END_MESSAGE 이벤트로 transcript 받음
+ * 3. route.ts로 전송 → DB 조회 + 응답 생성
+ * 4. avatar.speak()로 응답
+ * 
+ * ================================================
+ */
+
 import {
   AvatarQuality,
   StreamingEvents,
@@ -16,6 +33,9 @@ import { StreamingAvatarProvider, StreamingAvatarSessionState } from "./logic";
 
 import { AVATARS } from "@/app/lib/constants";
 
+// ============================================
+// 아바타 기본 설정
+// ============================================
 const DEFAULT_CONFIG: StartAvatarRequest = {
   quality: AvatarQuality.Low,
   avatarName: AVATARS[0].avatar_id,
@@ -27,7 +47,7 @@ const DEFAULT_CONFIG: StartAvatarRequest = {
   language: "ko",
   voiceChatTransport: VoiceChatTransport.WEBSOCKET,
   sttSettings: {
-    provider: STTProvider.DEEPGRAM,
+    provider: STTProvider.DEEPGRAM,  // HeyGen 내장 STT 사용
   },
 };
 
@@ -35,14 +55,6 @@ interface ChatMessage {
   role: "user" | "assistant";
   content: string;
 }
-
-// VAD 설정
-const VAD_CONFIG = {
-  SILENCE_THRESHOLD: 0.01,      // 침묵 판단 기준 (낮을수록 민감)
-  SPEECH_THRESHOLD: 0.02,       // 말하기 시작 판단 기준
-  SILENCE_DURATION: 1500,       // 침묵 지속 시간 (ms) 후 녹음 중지
-  MIN_RECORDING_TIME: 500,      // 최소 녹음 시간 (ms)
-};
 
 function InteractiveAvatar() {
   const {
@@ -59,28 +71,18 @@ function InteractiveAvatar() {
   const [isLoading, setIsLoading] = useState(false);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [isListening, setIsListening] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [micEnabled, setMicEnabled] = useState(false);
   const mediaStream = useRef<HTMLVideoElement>(null);
+  
+  // 상태 관리 refs
   const isProcessingRef = useRef(false);
   const hasGreetedRef = useRef(false);
   const hasStartedRef = useRef(false);
   const userNameRef = useRef<string>('');
   const userStatsRef = useRef<any>(null);
-  const isAvatarTalkingRef = useRef(false);  // 🆕 아바타 말하는 중 체크
-  
-  // 🆕 Whisper STT + VAD 관련
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const micStreamRef = useRef<MediaStream | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const vadIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const silenceStartRef = useRef<number | null>(null);
-  const recordingStartRef = useRef<number | null>(null);
-  const isVadActiveRef = useRef(false);
-  const isRecordingRef = useRef(false);  // 🆕 동기 체크용
 
+  // ============================================
+  // API 호출 함수들
+  // ============================================
   async function fetchAccessToken() {
     try {
       const response = await fetch("/api/get-access-token", {
@@ -95,239 +97,30 @@ function InteractiveAvatar() {
     }
   }
 
-  // ============================================
-  // 🆕 Whisper STT 함수
-  // ============================================
-  const transcribeWithWhisper = async (audioBlob: Blob): Promise<string> => {
-    try {
-      console.log("🎤 Whisper로 변환 중...", audioBlob.size, "bytes");
-      
-      const formData = new FormData();
-      formData.append("audio", audioBlob, "recording.webm");
-
-      const response = await fetch("/api/whisper", {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = await response.json();
-      
-      if (data.error) {
-        console.error("Whisper 에러:", data.error);
-        return "";
-      }
-      
-      console.log("🎤 Whisper 결과:", data.text);
-      return data.text || "";
-    } catch (error) {
-      console.error("Whisper API 호출 실패:", error);
-      return "";
-    }
-  };
-
-  // ============================================
-  // 🆕 VAD (Voice Activity Detection) 함수들
-  // ============================================
-  const getAudioLevel = (): number => {
-    if (!analyserRef.current) return 0;
-    
-    const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
-    analyserRef.current.getByteFrequencyData(dataArray);
-    
-    // 평균 음량 계산
-    const sum = dataArray.reduce((a, b) => a + b, 0);
-    const average = sum / dataArray.length / 255; // 0~1 범위로 정규화
-    
-    return average;
-  };
-
-  const startVAD = () => {
-    if (vadIntervalRef.current) return;
-    
-    isVadActiveRef.current = true;
-    
-    vadIntervalRef.current = setInterval(() => {
-      // 처리 중이거나 아바타가 말하는 중이면 무시
-      if (isProcessingRef.current || isLoading || isAvatarTalkingRef.current) {
-        return;
-      }
-
-      const level = getAudioLevel();
-      
-      if (!isRecordingRef.current) {
-        // 녹음 중 아닐 때: 음성 감지되면 녹음 시작
-        if (level > VAD_CONFIG.SPEECH_THRESHOLD) {
-          console.log("🎤 음성 감지! 녹음 시작", level.toFixed(3));
-          startRecording();
-        }
-      } else {
-        // 녹음 중일 때: 침묵 감지되면 녹음 중지
-        if (level < VAD_CONFIG.SILENCE_THRESHOLD) {
-          if (!silenceStartRef.current) {
-            silenceStartRef.current = Date.now();
-          } else {
-            const silenceDuration = Date.now() - silenceStartRef.current;
-            const recordingDuration = Date.now() - (recordingStartRef.current || 0);
-            
-            // 최소 녹음 시간 이상이고, 침묵이 일정 시간 지속되면 중지
-            if (recordingDuration > VAD_CONFIG.MIN_RECORDING_TIME && 
-                silenceDuration > VAD_CONFIG.SILENCE_DURATION) {
-              console.log("🔇 침묵 감지! 녹음 중지");
-              stopRecording();
-            }
-          }
-        } else {
-          // 소리가 나면 침묵 타이머 리셋
-          silenceStartRef.current = null;
-        }
-      }
-    }, 100); // 100ms마다 체크
-  };
-
-  const stopVAD = () => {
-    if (vadIntervalRef.current) {
-      clearInterval(vadIntervalRef.current);
-      vadIntervalRef.current = null;
-    }
-    isVadActiveRef.current = false;
-  };
-
-  const startRecording = () => {
-    // 🆕 ref로 동기 체크
-    if (!micStreamRef.current || isRecordingRef.current) return;
-    
-    isRecordingRef.current = true;  // 🆕 즉시 설정
-    
-    try {
-      const mediaRecorder = new MediaRecorder(micStreamRef.current, {
-        mimeType: "audio/webm",
-      });
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-      recordingStartRef.current = Date.now();
-      silenceStartRef.current = null;
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-        
-        // 너무 짧은 녹음 무시
-        if (audioBlob.size < 3000) {
-          console.log("녹음이 너무 짧음, 무시");
-          isRecordingRef.current = false;
-          setIsRecording(false);
-          return;
-        }
-
-        // Whisper로 텍스트 변환
-        const transcript = await transcribeWithWhisper(audioBlob);
-        
-        if (transcript && transcript.trim()) {
-          await handleUserSpeech(transcript);
-        }
-        
-        isRecordingRef.current = false;
-        setIsRecording(false);
-      };
-
-      mediaRecorder.start();
-      setIsRecording(true);
-      setIsListening(true);
-    } catch (error) {
-      console.error("녹음 시작 실패:", error);
-      isRecordingRef.current = false;
-    }
-  };
-
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-      mediaRecorderRef.current.stop();
-    }
-    isRecordingRef.current = false;  // 🆕 즉시 설정
-    setIsListening(false);
-    silenceStartRef.current = null;
-  };
-
-  // ============================================
-  // 🆕 마이크 + VAD 초기화
-  // ============================================
-  const initMicAndVAD = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      micStreamRef.current = stream;
-      
-      // AudioContext 설정
-      audioContextRef.current = new AudioContext();
-      const source = audioContextRef.current.createMediaStreamSource(stream);
-      analyserRef.current = audioContextRef.current.createAnalyser();
-      analyserRef.current.fftSize = 256;
-      source.connect(analyserRef.current);
-      
-      setMicEnabled(true);
-      console.log("🎤 마이크 + VAD 초기화 완료!");
-      
-      // VAD 시작
-      startVAD();
-      
-    } catch (error) {
-      console.error("마이크 초기화 실패:", error);
-    }
-  };
-
-  const cleanupMicAndVAD = () => {
-    stopVAD();
-    stopRecording();
-    
-    if (micStreamRef.current) {
-      micStreamRef.current.getTracks().forEach(track => track.stop());
-      micStreamRef.current = null;
-    }
-    
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-    
-    setMicEnabled(false);
-  };
-
-  // ============================================
-  // API 호출 함수
-  // ============================================
-  const callChatAPI = async (
-    type: "greeting" | "game_explain" | "chat",
-    options: {
-      message?: string;
-      history?: ChatMessage[];
-      game?: string;
-    } = {}
-  ) => {
+  // route.ts 호출 (DB 연동 + Function Calling)
+  const callChatAPI = async (type: string, data?: any) => {
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: type,
-          message: options.message || '',
-          history: options.history || [],
-          game: options.game || '',
           userName: userNameRef.current,
           userStats: userStatsRef.current,
+          ...data,
         }),
       });
-      const data = await response.json();
-      return data.reply;
+      const result = await response.json();
+      return result.reply || result.error || "응답을 생성하지 못했습니다.";
     } catch (error) {
       console.error("Chat API error:", error);
-      return "죄송합니다. 일시적인 오류가 발생했습니다.";
+      return "죄송합니다. 일시적인 오류가 발생했습니다. 다시 말씀해 주세요.";
     }
   };
 
+  // ============================================
+  // 아바타 음성 출력
+  // ============================================
   const speakWithAvatar = async (text: string) => {
     console.log("=== Attempting to speak ===");
     console.log("Avatar ref exists:", !!avatarRef.current);
@@ -338,23 +131,21 @@ function InteractiveAvatar() {
       return;
     }
     
-    // 🆕 speak 호출 전에 미리 VAD 차단 (이벤트 딜레이 대비)
-    isAvatarTalkingRef.current = true;
-    
     try {
       console.log("Calling avatar.speak()...");
       await avatarRef.current.speak({
         text: text,
-        taskType: TaskType.REPEAT,
+        taskType: TaskType.REPEAT,  // 우리가 생성한 응답을 그대로 말함
       });
       console.log("Speak successful!");
     } catch (error) {
       console.error("Avatar speak error:", error);
-      // 에러 시 VAD 다시 활성화
-      isAvatarTalkingRef.current = false;
     }
   };
 
+  // ============================================
+  // 🎯 핵심: HeyGen Voice Chat에서 받은 음성 처리
+  // ============================================
   const handleUserSpeech = useMemoizedFn(async (transcript: string) => {
     if (!transcript.trim() || isProcessingRef.current) return;
     
@@ -363,23 +154,30 @@ function InteractiveAvatar() {
     
     console.log("User said:", transcript);
     
+    // 채팅 히스토리에 추가
     const newHistory = [...chatHistory, { role: "user" as const, content: transcript }];
     setChatHistory(newHistory);
     
+    // route.ts로 전송 → DB 조회 + 응답 생성
     const reply = await callChatAPI("chat", { 
       message: transcript, 
       history: chatHistory 
     });
     console.log("API reply:", reply);
     
+    // 응답을 히스토리에 추가
     setChatHistory([...newHistory, { role: "assistant" as const, content: reply }]);
     
+    // 아바타가 응답 말하기
     await speakWithAvatar(reply);
     
     setIsLoading(false);
     isProcessingRef.current = false;
   });
 
+  // ============================================
+  // 아바타 세션 시작
+  // ============================================
   const startSession = useMemoizedFn(async () => {
     if (hasStartedRef.current) {
       console.log("Session already started, skipping...");
@@ -391,6 +189,7 @@ function InteractiveAvatar() {
       const newToken = await fetchAccessToken();
       const avatarInstance = initAvatar(newToken);
 
+      // 스트림 준비 완료
       avatarInstance.on(StreamingEvents.STREAM_READY, async (event) => {
         console.log(">>>>> Stream ready:", event.detail);
         
@@ -402,26 +201,14 @@ function InteractiveAvatar() {
             console.log("🔧 현재 저장된 userName:", userNameRef.current);
             console.log("🔧 현재 저장된 stats:", userStatsRef.current);
             
+            // route.ts에서 맞춤 인사말 생성
             const greeting = await callChatAPI("greeting");
             console.log("🔧 생성된 인사말:", greeting);
 
-            await new Promise<void>((resolve) => {
-              const onStopTalking = () => {
-                console.log("🎤 아바타 말 끝남!");
-                avatarInstance.off(StreamingEvents.AVATAR_STOP_TALKING, onStopTalking);
-                resolve();
-              };
-              avatarInstance.on(StreamingEvents.AVATAR_STOP_TALKING, onStopTalking);
-              speakWithAvatar(greeting);
-            });
-
+            await speakWithAvatar(greeting);
             setChatHistory([{ role: "assistant", content: greeting }]);
-            console.log("Greeting sent successfully!");
-
-            // 🆕 마이크 + VAD 초기화 (인사 후)
-            await initMicAndVAD();
-            console.log("🎤 음성 인식 준비 완료! 말씀하시면 자동으로 인식합니다.");
             
+            console.log("Greeting sent successfully!");
             hasGreetedRef.current = true;
           } catch (error) {
             console.error("Error in greeting sequence:", error);
@@ -429,25 +216,39 @@ function InteractiveAvatar() {
         }
       });
       
+      // 스트림 연결 끊김
       avatarInstance.on(StreamingEvents.STREAM_DISCONNECTED, () => {
         console.log("Stream disconnected");
-        cleanupMicAndVAD();
         hasGreetedRef.current = false;
         hasStartedRef.current = false;
       });
 
-      // 🆕 아바타 말하기 시작/끝 감지
-      avatarInstance.on(StreamingEvents.AVATAR_START_TALKING, () => {
-        console.log("🗣️ 아바타 말하기 시작 - VAD 일시 중지");
-        isAvatarTalkingRef.current = true;
+      // 🎯 HeyGen Voice Chat 이벤트들
+      avatarInstance.on(StreamingEvents.USER_START, () => {
+        console.log("🎤 User started speaking");
+        setIsListening(true);
       });
 
-      avatarInstance.on(StreamingEvents.AVATAR_STOP_TALKING, () => {
-        console.log("🔇 아바타 말하기 끝 - VAD 재개");
-        isAvatarTalkingRef.current = false;
+      avatarInstance.on(StreamingEvents.USER_STOP, () => {
+        console.log("🎤 User stopped speaking");
+        setIsListening(false);
       });
 
+      // 🎯 핵심: 사용자 음성 transcript 받기
+      avatarInstance.on(StreamingEvents.USER_END_MESSAGE, (event) => {
+        const finalMessage = event.detail?.message;
+        console.log("🎤 User final message:", finalMessage);
+        if (finalMessage && finalMessage.trim()) {
+          handleUserSpeech(finalMessage);
+        }
+      });
+
+      // 아바타 시작
       await startAvatar(config);
+
+      // 🎯 Voice Chat 시작 (HeyGen Deepgram STT 사용)
+      await avatarInstance.startVoiceChat();
+      console.log("🎤 Voice chat started - using HeyGen STT + route.ts for responses");
       
     } catch (error) {
       console.error("Error starting avatar session:", error);
@@ -455,6 +256,9 @@ function InteractiveAvatar() {
     }
   });
 
+  // ============================================
+  // 텍스트 메시지 전송
+  // ============================================
   const handleSendMessage = useMemoizedFn(async () => {
     const textToSend = inputText.trim();
     if (!textToSend || !avatarRef.current || isLoading) return;
@@ -465,9 +269,9 @@ function InteractiveAvatar() {
     const newHistory = [...chatHistory, { role: "user" as const, content: textToSend }];
     setChatHistory(newHistory);
 
-    const reply = await callChatAPI("chat", {
-      message: textToSend,
-      history: chatHistory
+    const reply = await callChatAPI("chat", { 
+      message: textToSend, 
+      history: chatHistory 
     });
 
     setChatHistory([...newHistory, { role: "assistant" as const, content: reply }]);
@@ -484,18 +288,14 @@ function InteractiveAvatar() {
     }
   };
 
-  useUnmount(() => {
-    stopAvatar();
-    cleanupMicAndVAD();
-    hasGreetedRef.current = false;
-    hasStartedRef.current = false;
-  });
-
+  // ============================================
+  // 게임 페이지와의 postMessage 통신
+  // ============================================
   useEffect(() => {
     const handleMessage = async (event: MessageEvent) => {
+      // 아바타 리셋
       if (event.data && event.data.type === 'RESET_AVATAR') {
         console.log('📥 아바타 리셋 신호 받음!');
-        cleanupMicAndVAD();
         hasStartedRef.current = false;
         hasGreetedRef.current = false;
         userNameRef.current = '';
@@ -503,10 +303,23 @@ function InteractiveAvatar() {
         return;
       }
       
+      // 아바타 종료 (PIP X 버튼)
+      if (event.data && event.data.type === 'STOP_AVATAR') {
+        console.log('📥 아바타 종료 신호 받음!');
+        stopAvatar();
+        hasStartedRef.current = false;
+        hasGreetedRef.current = false;
+        userNameRef.current = '';
+        userStatsRef.current = null;
+        return;
+      }
+      
+      // 아바타 시작 (게임 페이지에서 이름 입력 후)
       if (event.data && event.data.type === 'START_AVATAR') {
         console.log('📥 게임에서 시작 신호 받음!');
         console.log('📥 받은 데이터:', event.data);
         console.log('📥 이름:', event.data.name);
+        
         if (event.data.name) {
           userNameRef.current = event.data.name;
         }
@@ -517,6 +330,7 @@ function InteractiveAvatar() {
         startSession();
       }
       
+      // 게임 설명 요청
       if (event.data && event.data.type === 'EXPLAIN_GAME') {
         const game = event.data.game;
         console.log('📥 게임 설명 요청:', game);
@@ -533,6 +347,12 @@ function InteractiveAvatar() {
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
+  // 컴포넌트 언마운트 시 정리
+  useUnmount(() => {
+    stopAvatar();
+  });
+
+  // 비디오 스트림 연결
   useEffect(() => {
     if (stream && mediaStream.current) {
       mediaStream.current.srcObject = stream;
@@ -542,6 +362,9 @@ function InteractiveAvatar() {
     }
   }, [mediaStream, stream]);
 
+  // ============================================
+  // UI 렌더링
+  // ============================================
   return (
     <div className="w-full h-full flex flex-col">
       {sessionState === StreamingAvatarSessionState.CONNECTED && stream ? (
@@ -554,6 +377,7 @@ function InteractiveAvatar() {
               style={{ display: "block", width: "100%", height: "auto" }}
             />
             
+            {/* 종료 버튼 */}
             <button
               className="absolute top-2 right-2 w-7 h-7 bg-black/50 hover:bg-red-600 text-white rounded-full flex items-center justify-center text-xs transition-all"
               title="종료"
@@ -562,20 +386,16 @@ function InteractiveAvatar() {
               ✕
             </button>
 
+            {/* 음성 인식 상태 표시 */}
             <div className="absolute bottom-2 left-2 flex items-center gap-2">
-              <div className={`w-3 h-3 rounded-full ${
-                isRecording ? 'bg-red-500 animate-pulse' : 
-                isLoading ? 'bg-yellow-500' : 
-                micEnabled ? 'bg-green-500' : 'bg-gray-500'
-              }`} />
+              <div className={`w-3 h-3 rounded-full ${isListening ? 'bg-red-500 animate-pulse' : isLoading ? 'bg-yellow-500' : 'bg-green-500'}`} />
               <span className="text-white text-xs bg-black/50 px-2 py-1 rounded">
-                {isRecording ? '🎤 듣는 중...' : 
-                 isLoading ? '응답 생성 중...' : 
-                 micEnabled ? '말씀하세요' : '마이크 준비 중...'}
+                {isListening ? '듣는 중...' : isLoading ? '응답 생성 중...' : '말씀하세요'}
               </span>
             </div>
           </div>
 
+          {/* 텍스트 입력 */}
           <div className="p-2 bg-zinc-800 border-t border-zinc-700">
             <div className="flex gap-2">
               <input
@@ -598,17 +418,19 @@ function InteractiveAvatar() {
           </div>
         </div>
       ) : (
-        <div className="w-full h-full flex items-center justify-center bg-zinc-900">
+        <div className="w-full h-full flex items-center justify-center">
           {sessionState === StreamingAvatarSessionState.CONNECTING ? (
             <div className="flex flex-col items-center gap-3 text-white">
-              <div className="w-10 h-10 border-4 border-purple-500 border-t-transparent rounded-full animate-spin" />
-              <span className="text-lg">연결 중...</span>
+              <div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
+              <span className="text-sm">연결 중...</span>
             </div>
           ) : (
-            <div className="flex flex-col items-center gap-3 text-white">
-              <span className="text-lg">🎮 게임을 시작하면</span>
-              <span className="text-lg">AI 도우미가 나타나요!</span>
-            </div>
+            <button
+              className="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-full text-base font-medium transition-all shadow-lg hover:shadow-xl"
+              onClick={startSession}
+            >
+              🎮 게임 도우미 시작
+            </button>
           )}
         </div>
       )}

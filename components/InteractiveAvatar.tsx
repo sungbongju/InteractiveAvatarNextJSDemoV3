@@ -234,9 +234,27 @@ function InteractiveAvatar() {
         setIsListening(false);
       });
 
+      // 🔧 디버깅: USER_TALKING_MESSAGE도 확인
+      avatarInstance.on(StreamingEvents.USER_TALKING_MESSAGE, (event) => {
+        console.log("🎤 USER_TALKING_MESSAGE 이벤트:", event);
+        console.log("🎤 event.detail:", event.detail);
+        console.log("🎤 event.detail?.message:", event.detail?.message);
+      });
+
       // 🎯 핵심: 사용자 음성 transcript 받기
       avatarInstance.on(StreamingEvents.USER_END_MESSAGE, (event) => {
-        const finalMessage = event.detail?.message;
+        // 🔧 디버깅: 이벤트 전체 구조 확인
+        console.log("🎤 USER_END_MESSAGE 전체 이벤트:", event);
+        console.log("🎤 event.detail:", event.detail);
+        console.log("🎤 event.message:", (event as any).message);
+        console.log("🎤 event.text:", (event as any).text);
+        
+        // 여러 경로 시도
+        const finalMessage = event.detail?.message 
+          || (event as any).message 
+          || (event as any).text
+          || event.detail?.text;
+          
         console.log("🎤 User final message:", finalMessage);
         if (finalMessage && finalMessage.trim()) {
           handleUserSpeech(finalMessage);

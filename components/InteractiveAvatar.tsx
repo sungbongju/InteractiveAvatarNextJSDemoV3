@@ -66,6 +66,36 @@ function InteractiveAvatar() {
   const lastTranscriptRef = useRef("");
 
   // ============================================
+  // 🔧 세션 완전 초기화 함수
+  // ============================================
+  const resetSession = useMemoizedFn(async () => {
+    console.log("🔄 세션 초기화 중...");
+    
+    // 에러 무시하고 stopAvatar 시도
+    try {
+      await stopAvatar();
+    } catch (e) {
+      console.log("stopAvatar 에러 (무시):", e);
+    }
+
+    // 모든 상태 초기화
+    hasStartedRef.current = false;
+    hasGreetedRef.current = false;
+    isProcessingRef.current = false;
+    userNameRef.current = "";
+    userStatsRef.current = null;
+    lastTranscriptRef.current = "";
+    setChatHistory([]);
+    setIsLoading(false);
+    setIsListening(false);
+    setIsAvatarSpeaking(false);
+
+    // 약간의 딜레이 (세션 정리 시간)
+    await new Promise((r) => setTimeout(r, 500));
+    console.log("🔄 세션 초기화 완료");
+  });
+
+  // ============================================
   // API 호출
   // ============================================
   const fetchAccessToken = async () => {
@@ -167,7 +197,11 @@ function InteractiveAvatar() {
   // 세션 시작
   // ============================================
   const startSession = useMemoizedFn(async () => {
-    if (hasStartedRef.current) return;
+    // 🔧 이미 시작 중이면 무시
+    if (hasStartedRef.current) {
+      console.log("⚠️ 이미 세션 시작됨, 무시");
+      return;
+    }
     hasStartedRef.current = true;
 
     try {
@@ -188,6 +222,7 @@ function InteractiveAvatar() {
               ? `안녕하세요, ${name}님! 다시 만나서 반가워요. 최고 점수 ${stats.best_score}점이네요!`
               : `안녕하세요, ${name}님! 저는 두뇌 게임 도우미예요.`;
 
+          console.log("👋 인사말:", greeting);
           await speakWithAvatar(greeting);
           setChatHistory([{ role: "assistant", content: greeting }]);
           hasGreetedRef.current = true;
@@ -307,17 +342,20 @@ function InteractiveAvatar() {
         case "RESET_AVATAR":
         case "STOP_AVATAR":
           console.log(`📥 ${type}`);
-          stopAvatar();
-          hasStartedRef.current = false;
-          hasGreetedRef.current = false;
-          userNameRef.current = "";
-          userStatsRef.current = null;
+          await resetSession();
           break;
 
         case "START_AVATAR":
           console.log("📥 START_AVATAR", { name, stats });
+          
+          // 🔧 핵심: 먼저 기존 세션 완전 정리 후 새로 시작
+          await resetSession();
+          
+          // 새 사용자 정보 설정
           if (name) userNameRef.current = name;
           if (stats) userStatsRef.current = stats;
+          
+          // 새 세션 시작
           startSession();
           break;
 
@@ -336,7 +374,11 @@ function InteractiveAvatar() {
   }, []);
 
   // 언마운트 시 정리
-  useUnmount(() => stopAvatar());
+  useUnmount(() => {
+    try {
+      stopAvatar();
+    } catch {}
+  });
 
   // 비디오 스트림 연결
   useEffect(() => {
@@ -378,7 +420,7 @@ function InteractiveAvatar() {
             {/* 종료 버튼 */}
             <button
               className="absolute top-2 right-2 w-7 h-7 bg-black/50 hover:bg-red-600 text-white rounded-full flex items-center justify-center text-xs"
-              onClick={() => stopAvatar()}
+              onClick={() => resetSession()}
             >
               ✕
             </button>

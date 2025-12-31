@@ -73,50 +73,13 @@ function InteractiveAvatar() {
   const [isListening, setIsListening] = useState(false);
   const mediaStream = useRef<HTMLVideoElement>(null);
   
-  // ============================================
-  // 🆕 직접 DB 조회 (route.ts 우회)
-  // ============================================
-  const DB_API_URL = "https://www.aiforalab.com/api.php";
-  
-  const fetchUserStats = async (playerName: string) => {
-    try {
-      const response = await fetch(`${DB_API_URL}?action=get_stats&player_name=${encodeURIComponent(playerName)}`);
-      const data = await response.json();
-      console.log("📊 DB 조회 결과:", data);
-      return data;
-    } catch (error) {
-      console.error("DB 조회 실패:", error);
-      return null;
-    }
-  };
-
-  const generateResponse = (transcript: string, stats: any): string => {
-    const lowerText = transcript.toLowerCase();
-    
-    // 점수 관련 질문
-    if (lowerText.includes("점수") || lowerText.includes("기록")) {
-      if (stats && stats.best_score > 0) {
-        return `${userNameRef.current}님의 최고 점수는 ${stats.best_score}점이에요! 총 ${stats.total_games}번 플레이하셨네요.`;
-      }
-      return "아직 게임 기록이 없어요. 게임을 한 번 해보실래요?";
-    }
-    
-    // 게임 추천
-    if (lowerText.includes("추천") || lowerText.includes("어떤 게임")) {
-      return "화투 짝맞추기나 속담 완성하기를 추천드려요! 기억력과 언어 능력 향상에 도움이 됩니다.";
-    }
-    
-    // 기본 응답
-    return "네, 궁금한 점이 있으시면 말씀해 주세요! 점수나 게임에 대해 물어보실 수 있어요.";
-  };
-
   // 상태 관리 refs
   const isProcessingRef = useRef(false);
   const hasGreetedRef = useRef(false);
   const hasStartedRef = useRef(false);
   const userNameRef = useRef<string>('');
   const userStatsRef = useRef<any>(null);
-  const lastTranscriptRef = useRef<string>('');  // 🆕 마지막 transcript 저장
+  const lastTranscriptRef = useRef<string>('');  // 마지막 transcript 저장
 
   // ============================================
   // API 호출 함수들

@@ -34,7 +34,7 @@ import { StreamingAvatarProvider, StreamingAvatarSessionState } from "./logic";
 import { AVATARS } from "@/app/lib/constants";
 
 // ============================================
-// 아바타 기본 설정
+// 아바타 기본 설정 (교수님 코드와 동일)
 // ============================================
 const DEFAULT_CONFIG: StartAvatarRequest = {
   quality: AvatarQuality.Low,
@@ -47,7 +47,7 @@ const DEFAULT_CONFIG: StartAvatarRequest = {
   language: "ko",
   voiceChatTransport: VoiceChatTransport.WEBSOCKET,
   sttSettings: {
-    provider: STTProvider.DEEPGRAM,  // HeyGen 내장 STT 사용
+    provider: STTProvider.DEEPGRAM,
   },
 };
 
@@ -73,12 +73,50 @@ function InteractiveAvatar() {
   const [isListening, setIsListening] = useState(false);
   const mediaStream = useRef<HTMLVideoElement>(null);
   
+  // ============================================
+  // 🆕 직접 DB 조회 (route.ts 우회)
+  // ============================================
+  const DB_API_URL = "https://www.aiforalab.com/api.php";
+  
+  const fetchUserStats = async (playerName: string) => {
+    try {
+      const response = await fetch(`${DB_API_URL}?action=get_stats&player_name=${encodeURIComponent(playerName)}`);
+      const data = await response.json();
+      console.log("📊 DB 조회 결과:", data);
+      return data;
+    } catch (error) {
+      console.error("DB 조회 실패:", error);
+      return null;
+    }
+  };
+
+  const generateResponse = (transcript: string, stats: any): string => {
+    const lowerText = transcript.toLowerCase();
+    
+    // 점수 관련 질문
+    if (lowerText.includes("점수") || lowerText.includes("기록")) {
+      if (stats && stats.best_score > 0) {
+        return `${userNameRef.current}님의 최고 점수는 ${stats.best_score}점이에요! 총 ${stats.total_games}번 플레이하셨네요.`;
+      }
+      return "아직 게임 기록이 없어요. 게임을 한 번 해보실래요?";
+    }
+    
+    // 게임 추천
+    if (lowerText.includes("추천") || lowerText.includes("어떤 게임")) {
+      return "화투 짝맞추기나 속담 완성하기를 추천드려요! 기억력과 언어 능력 향상에 도움이 됩니다.";
+    }
+    
+    // 기본 응답
+    return "네, 궁금한 점이 있으시면 말씀해 주세요! 점수나 게임에 대해 물어보실 수 있어요.";
+  };
+
   // 상태 관리 refs
   const isProcessingRef = useRef(false);
   const hasGreetedRef = useRef(false);
   const hasStartedRef = useRef(false);
   const userNameRef = useRef<string>('');
   const userStatsRef = useRef<any>(null);
+  const lastTranscriptRef = useRef<string>('');  // 🆕 마지막 transcript 저장
 
   // ============================================
   // API 호출 함수들
@@ -152,7 +190,18 @@ function InteractiveAvatar() {
     isProcessingRef.current = true;
     setIsLoading(true);
     
-    console.log("User said:", transcript);
+    console.log("🎯 User said:", transcript);
+    
+    // 🔥 HeyGen 내부 LLM 응답 즉시 차단!
+    if (avatarRef.current) {
+      try {
+        console.log("🛑 HeyGen 자동 응답 차단 시도 (interrupt)...");
+        await avatarRef.current.interrupt();
+        console.log("🛑 HeyGen 자동 응답 차단 성공!");
+      } catch (interruptError) {
+        console.log("🛑 interrupt 실패 (무시):", interruptError);
+      }
+    }
     
     // 채팅 히스토리에 추가
     const newHistory = [...chatHistory, { role: "user" as const, content: transcript }];
@@ -163,7 +212,7 @@ function InteractiveAvatar() {
       message: transcript, 
       history: chatHistory 
     });
-    console.log("API reply:", reply);
+    console.log("🎯 API reply:", reply);
     
     // 응답을 히스토리에 추가
     setChatHistory([...newHistory, { role: "assistant" as const, content: reply }]);
@@ -197,12 +246,21 @@ function InteractiveAvatar() {
           try {
             await new Promise(resolve => setTimeout(resolve, 1500));
             
-            console.log("🔧 인사말 요청 중...");
+            console.log("🔧 인사말 생성 중...");
             console.log("🔧 현재 저장된 userName:", userNameRef.current);
             console.log("🔧 현재 저장된 stats:", userStatsRef.current);
             
-            // route.ts에서 맞춤 인사말 생성
-            const greeting = await callChatAPI("greeting");
+            // 🆕 직접 인사말 생성 (route.ts 우회)
+            let greeting: string;
+            const stats = userStatsRef.current;
+            const name = userNameRef.current || "손님";
+            
+            if (stats && stats.total_games && parseInt(stats.total_games) > 0) {
+              greeting = `안녕하세요, ${name}님! 다시 만나서 반가워요. 이전에 ${stats.best_score}점을 기록하셨네요. 오늘도 즐거운 게임 되세요!`;
+            } else {
+              greeting = `안녕하세요, ${name}님! 저는 두뇌 게임 도우미예요. 게임 방법이 궁금하시면 물어봐 주세요!`;
+            }
+            
             console.log("🔧 생성된 인사말:", greeting);
 
             await speakWithAvatar(greeting);
@@ -234,38 +292,41 @@ function InteractiveAvatar() {
         setIsListening(false);
       });
 
-      // 🔧 디버깅: USER_TALKING_MESSAGE도 확인
+      // 🔧 디버깅: USER_TALKING_MESSAGE에서 transcript 저장
       avatarInstance.on(StreamingEvents.USER_TALKING_MESSAGE, (event) => {
-        console.log("🎤 USER_TALKING_MESSAGE 이벤트:", event);
-        console.log("🎤 event.detail:", event.detail);
-        console.log("🎤 event.detail?.message:", event.detail?.message);
+        const message = event.detail?.message;
+        console.log("🎤 USER_TALKING_MESSAGE:", message);
+        if (message) {
+          lastTranscriptRef.current = message;  // 마지막 transcript 저장
+        }
       });
 
-      // 🎯 핵심: 사용자 음성 transcript 받기
+      // 🎯 핵심: USER_END_MESSAGE에서 저장된 transcript 처리
       avatarInstance.on(StreamingEvents.USER_END_MESSAGE, (event) => {
-        // 🔧 디버깅: 이벤트 전체 구조 확인
-        console.log("🎤 USER_END_MESSAGE 전체 이벤트:", event);
-        console.log("🎤 event.detail:", event.detail);
-        console.log("🎤 event.message:", (event as any).message);
-        console.log("🎤 event.text:", (event as any).text);
+        console.log("🎤 USER_END_MESSAGE - 저장된 transcript:", lastTranscriptRef.current);
         
-        // 여러 경로 시도
-        const finalMessage = event.detail?.message 
-          || (event as any).message 
-          || (event as any).text
-          || event.detail?.text;
-          
-        console.log("🎤 User final message:", finalMessage);
+        const finalMessage = lastTranscriptRef.current;
         if (finalMessage && finalMessage.trim()) {
           handleUserSpeech(finalMessage);
         }
+        
+        // 처리 후 초기화
+        lastTranscriptRef.current = '';
       });
 
       // 아바타 시작
       await startAvatar(config);
 
       // 🎯 Voice Chat 시작 (HeyGen Deepgram STT 사용)
-      await avatarInstance.startVoiceChat();
+      console.log("🎤 Voice Chat 시작 시도...");
+      try {
+        await avatarInstance.startVoiceChat({
+          useSilencePrompt: false,
+        });
+        console.log("🎤 Voice Chat 시작 성공!");
+      } catch (vcError) {
+        console.error("🎤 Voice Chat 시작 실패:", vcError);
+      }
       console.log("🎤 Voice chat started - using HeyGen STT + route.ts for responses");
       
     } catch (error) {
@@ -314,6 +375,7 @@ function InteractiveAvatar() {
       // 아바타 리셋
       if (event.data && event.data.type === 'RESET_AVATAR') {
         console.log('📥 아바타 리셋 신호 받음!');
+        stopAvatar();  // 🔧 실제 세션 종료!
         hasStartedRef.current = false;
         hasGreetedRef.current = false;
         userNameRef.current = '';

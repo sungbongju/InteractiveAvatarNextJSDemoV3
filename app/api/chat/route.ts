@@ -35,8 +35,8 @@ const GAME_INFO: { [key: string]: { name: string; description: string } } = {
     description: "뒤집어진 카드들 중에서 같은 그림의 짝을 찾는 기억력 게임. 12장의 카드 중 6쌍을 찾으면 됩니다. 적은 시도로 찾을수록 높은 점수!"
   },
   yut: {
-    name: "윷놀이",
-    description: "윷을 던져서 도(1칸), 개(2칸), 걸(3칸), 윷(4칸), 모(5칸)가 나오면 그만큼 이동. 20칸을 먼저 도착하면 승리! 빽도(-1칸)도 있어요."
+    name: "색상 패턴 기억",
+    description: "빨강, 파랑, 노랑, 초록 4가지 색상 버튼이 순서대로 깜빡입니다. 그 순서를 기억해서 똑같이 눌러주세요. 단계가 올라갈수록 패턴이 길어져요!"
   },
   memory: {
     name: "숫자 기억하기",
@@ -175,7 +175,7 @@ async function executeFunction(name: string, args: any): Promise<string> {
           best_score: s.best_score || 0,
           avg_score: Math.round(s.avg_score) || 0,
           best_hwatu: s.best_hwatu || 0,
-          best_yut: s.best_yut || 0,
+          best_pattern: s.best_pattern || 0,
           best_memory: s.best_memory || 0,
           best_proverb: s.best_proverb || 0,
           best_calc: s.best_calc || 0,
@@ -265,11 +265,19 @@ function createSystemPrompt(userName: string): string {
 
 ## 🎮 게임 종류 (각 100점, 총 600점 만점)
 1. 화투 짝맞추기 (hwatu) - 기억력 게임
-2. 윷놀이 (yut) - 전통 게임
+2. 색상 패턴 기억 (yut) - 집중력 게임
 3. 숫자 기억하기 (memory) - 암기 게임
 4. 속담 완성하기 (proverb) - 언어 게임
 5. 산수 계산 (calc) - 수학 게임
 6. 순서 맞추기 (sequence) - 논리 게임
+
+## 🔢 숫자 읽는 규칙 (중요!)
+숫자를 말할 때는 반드시 한 자리씩 끊어서 읽으세요:
+- 64 → "육 사" (O), "육십사" (X)
+- 12 → "일 이" (O), "십이" (X)  
+- 357 → "삼 오 칠" (O), "삼백오십칠" (X)
+- 8492 → "팔 사 구 이" (O)
+숫자 기억하기 게임에서 특히 중요합니다!
 
 ## 👤 현재 사용자
 ${userName ? `이름: ${userName}님` : "이름을 아직 모릅니다"}
@@ -401,7 +409,7 @@ async function generateGreeting(userName: string): Promise<string> {
 function getBestGame(stats: any): string {
   const games = [
     { name: "화투 짝맞추기", score: stats.best_hwatu || 0 },
-    { name: "윷놀이", score: stats.best_yut || 0 },
+    { name: "색상 패턴 기억", score: stats.best_pattern || 0 },
     { name: "숫자 기억하기", score: stats.best_memory || 0 },
     { name: "속담 완성하기", score: stats.best_proverb || 0 },
     { name: "산수 계산", score: stats.best_calc || 0 },
@@ -427,7 +435,7 @@ async function generateGameExplanation(gameKey: string, userName: string): Promi
     if (statsResult.success && statsResult.stats) {
       const scoreMap: Record<string, string> = {
         hwatu: "best_hwatu",
-        yut: "best_yut",
+        yut: "best_pattern",
         memory: "best_memory",
         proverb: "best_proverb",
         calc: "best_calc",

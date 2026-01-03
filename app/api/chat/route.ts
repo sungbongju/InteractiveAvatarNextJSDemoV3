@@ -34,7 +34,7 @@ const GAME_INFO: { [key: string]: { name: string; description: string } } = {
     name: "화투 짝맞추기",
     description: "뒤집어진 카드들 중에서 같은 그림의 짝을 찾는 기억력 게임. 12장의 카드 중 6쌍을 찾으면 됩니다. 적은 시도로 찾을수록 높은 점수!"
   },
-  yut: {
+  pattern: {
     name: "색상 패턴 기억",
     description: "빨강, 파랑, 노랑, 초록 4가지 색상 버튼이 순서대로 깜빡입니다. 그 순서를 기억해서 똑같이 눌러주세요. 단계가 올라갈수록 패턴이 길어져요!"
   },
@@ -126,8 +126,8 @@ const tools: OpenAI.ChatCompletionTool[] = [
         properties: {
           game_key: {
             type: "string",
-            enum: ["hwatu", "yut", "memory", "proverb", "calc", "sequence"],
-            description: "게임 종류 (hwatu, yut, memory, proverb, calc, sequence)"
+            enum: ["hwatu", "pattern", "memory", "proverb", "calc", "sequence"],
+            description: "게임 종류 (hwatu, pattern, memory, proverb, calc, sequence)"
           }
         },
         required: ["game_key"]
@@ -265,7 +265,7 @@ function createSystemPrompt(userName: string): string {
 
 ## 🎮 게임 종류 (각 100점, 총 600점 만점)
 1. 화투 짝맞추기 (hwatu) - 기억력 게임
-2. 색상 패턴 기억 (yut) - 집중력 게임
+2. 색상 패턴 기억 (pattern) - 집중력 게임
 3. 숫자 기억하기 (memory) - 암기 게임
 4. 속담 완성하기 (proverb) - 언어 게임
 5. 산수 계산 (calc) - 수학 게임
@@ -435,7 +435,7 @@ async function generateGameExplanation(gameKey: string, userName: string): Promi
     if (statsResult.success && statsResult.stats) {
       const scoreMap: Record<string, string> = {
         hwatu: "best_hwatu",
-        yut: "best_pattern",
+        pattern: "best_pattern",
         memory: "best_memory",
         proverb: "best_proverb",
         calc: "best_calc",

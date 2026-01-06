@@ -4,7 +4,6 @@
  * ================================================
  *
  * 🆕 변경사항: HeyGen STT → Web Speech API (브라우저 내장, 무료)
- * 🚀 최적화: EXPLAIN_GAME에서 OpenAI API 호출 제거 (3-4초 → 0.5초)
  *
  * 흐름:
  * 1. Web Speech API → 음성을 텍스트로 변환 (무료!)
@@ -31,23 +30,6 @@ import { useStreamingAvatarSession } from "./logic/useStreamingAvatarSession";
 import { StreamingAvatarProvider, StreamingAvatarSessionState } from "./logic";
 import { AVATARS } from "@/app/lib/constants";
 import { WebSpeechRecognizer } from "@/app/lib/webSpeechAPI";
-
-// ============================================
-// 🚀 게임 설명 스크립트 (API 호출 없이 즉시 재생)
-// ============================================
-const GAME_SCRIPTS: { [key: string]: string } = {
-  hwatu: "화투 짝맞추기 게임이에요! 같은 그림의 카드를 찾아 짝을 맞춰보세요. 기억력을 키우는 데 아주 좋답니다. 카드를 클릭하면 뒤집어지고, 같은 그림 두 장을 찾으면 점수를 얻어요!",
-  
-  yut: "색상 패턴 게임이에요! 빨강, 파랑, 노랑, 초록 버튼이 순서대로 깜빡이면, 그 순서를 기억해서 똑같이 눌러주세요. 단계가 올라갈수록 순서가 길어져요!",
-  
-  memory: "숫자 기억하기 게임이에요! 화면에 숫자가 잠깐 나타났다가 사라져요. 그 숫자를 잘 기억했다가 입력해주세요. 점점 자릿수가 늘어나니까 집중해서 봐주세요!",
-  
-  proverb: "속담 완성하기 게임이에요! 한국 전통 속담의 앞부분이 나오면, 뒷부분을 맞춰주세요. 예를 들어 '가는 말이 고와야'가 나오면 '오는 말이 곱다'를 선택하면 돼요!",
-  
-  calc: "산수 계산 게임이에요! 간단한 덧셈과 뺄셈 문제가 나와요. 정답을 빠르게 맞춰보세요. 머리가 맑아지는 느낌이 들 거예요!",
-  
-  sequence: "순서 맞추기 게임이에요! 그림들을 논리적인 순서대로 배열해주세요. 예를 들어 아침, 점심, 저녁 순서로 맞추는 거예요. 생각하는 힘을 길러줘요!",
-};
 
 // 아바타 설정
 const AVATAR_CONFIG: StartAvatarRequest = {
@@ -479,19 +461,12 @@ function InteractiveAvatar() {
           startSession();
           break;
 
-        // 🚀 최적화: API 호출 제거, 고정 스크립트 사용
         case "EXPLAIN_GAME":
           console.log("📥 EXPLAIN_GAME:", game);
           if (avatarRef.current && game) {
-            const script = GAME_SCRIPTS[game];
-            if (script) {
-              console.log("🚀 즉시 재생 (API 호출 없음):", game);
-              speakWithAvatar(script);
-            } else {
-              // fallback: 알 수 없는 게임이면 기본 메시지
-              console.log("⚠️ 알 수 없는 게임, 기본 메시지:", game);
-              speakWithAvatar("이 게임을 선택하셨네요! 재미있게 즐겨보세요!");
-            }
+            const explanation = await callChatAPI("game_explain", { game });
+
+            speakWithAvatar(explanation);
           }
           break;
       }

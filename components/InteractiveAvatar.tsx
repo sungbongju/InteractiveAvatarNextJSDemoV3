@@ -12,6 +12,10 @@
  * 4. avatar.speak(REPEAT) → 응답 출력
  *
  * 핵심: 아바타가 말할 때 Web Speech 일시정지 → 자기 목소리 인식 방지
+ * 
+ * 🔧 2026-01-12 수정:
+ * - 숫자 발음 문제 해결 (454 → "사백오십사")
+ * - 이름 없을 때 "손님님" → "어서 오세요" 인사로 변경
  * ================================================
  */
 
@@ -31,7 +35,94 @@ import { StreamingAvatarProvider, StreamingAvatarSessionState } from "./logic";
 import { AVATARS } from "@/app/lib/constants";
 import { WebSpeechRecognizer } from "@/app/lib/webSpeechAPI";
 
+// ============================================
+// 🆕 숫자 → 한글 변환 유틸리티
+// ============================================
+
+/**
+ * 숫자를 한글 발음으로 변환
+ * 예: 454 → "사백오십사", 1000 → "천", 85 → "팔십오"
+ */
+function numberToKorean(num: number): string {
+  if (num === 0) return '영';
+  if (num < 0) return '마이너스 ' + numberToKorean(Math.abs(num));
+  
+  const units = ['', '일', '이', '삼', '사', '오', '육', '칠', '팔', '구'];
+  const smallUnits = ['', '십', '백', '천'];
+  const bigUnits = ['', '만', '억', '조'];
+  
+  let result = '';
+  const numStr = num.toString();
+  const len = numStr.length;
+  
+  for (let i = 0; i < len; i++) {
+    const digit = parseInt(numStr[i]);
+    const pos = len - i - 1;
+    const smallPos = pos % 4;
+    const bigPos = Math.floor(pos / 4);
+    
+    if (digit !== 0) {
+      // 1인 경우 '일'을 생략 (단, 일의 자리는 제외)
+      if (digit === 1 && smallPos > 0) {
+        result += smallUnits[smallPos];
+      } else {
+        result += units[digit] + smallUnits[smallPos];
+      }
+    }
+    
+    // 만, 억, 조 단위 추가
+    if (smallPos === 0 && bigPos > 0) {
+      const startIdx = Math.max(0, i - 3);
+      const chunk = numStr.substring(startIdx, i + 1);
+      if (parseInt(chunk) > 0) {
+        result += bigUnits[bigPos];
+      }
+    }
+  }
+  
+  return result || '영';
+}
+
+/**
+ * 점수를 한글 텍스트로 변환
+ * 예: 454 → "사백오십사점"
+ */
+function formatScoreToKorean(score: number | string): string {
+  const numScore = typeof score === 'string' ? parseInt(score) : score;
+  if (isNaN(numScore)) return '영점';
+  return numberToKorean(numScore) + '점';
+}
+
+/**
+ * 🆕 인사말 생성 함수
+ * - 이름이 없으면 "손님님" 대신 일반적인 환영 인사
+ * - 숫자는 한글로 변환
+ */
+function generateGreeting(
+  name: string | undefined,
+  stats: Record<string, unknown> | null
+): string {
+  const totalGames = stats?.total_games;
+  const bestScore = stats?.best_score;
+  
+  // 이름이 없는 경우
+  if (!name || name.trim() === '') {
+    return '어서 오세요. 게임에 오신 것을 환영합니다. 저는 두뇌 게임 도우미예요.';
+  }
+  
+  // 이름이 있고, 기존 플레이 기록이 있는 경우
+  if (stats && totalGames && parseInt(String(totalGames)) > 0 && bestScore) {
+    const scoreText = formatScoreToKorean(bestScore as number);
+    return `안녕하세요, ${name}님! 다시 만나서 반가워요. 최고 점수가 ${scoreText}이네요!`;
+  }
+  
+  // 이름이 있지만, 기록이 없는 경우
+  return `안녕하세요, ${name}님! 저는 두뇌 게임 도우미예요.`;
+}
+
+// ============================================
 // 아바타 설정
+// ============================================
 const AVATAR_CONFIG: StartAvatarRequest = {
   quality: AvatarQuality.Low,
   avatarName: AVATARS[0].avatar_id,
@@ -326,15 +417,12 @@ function InteractiveAvatar() {
         if (!hasGreetedRef.current) {
           await new Promise((r) => setTimeout(r, 1500));
 
-          const name = userNameRef.current || "손님";
+          // 🆕 수정: "손님" 기본값 제거, generateGreeting 함수 사용
+          const name = userNameRef.current;  // 기본값 없음!
           const stats = userStatsRef.current as Record<string, unknown> | null;
-          const totalGames = stats?.total_games;
-          const bestScore = stats?.best_score;
 
-          const greeting =
-            stats && totalGames && parseInt(String(totalGames)) > 0
-              ? `안녕하세요, ${name}님! 다시 만나서 반가워요. 최고 점수 ${bestScore}점이네요!`
-              : `안녕하세요, ${name}님! 저는 두뇌 게임 도우미예요.`;
+          // 🆕 새로운 인사말 생성 함수 사용 (숫자 한글 변환 + 이름 없을 때 처리)
+          const greeting = generateGreeting(name, stats);
 
           console.log("👋 인사말:", greeting);
           await speakWithAvatar(greeting);

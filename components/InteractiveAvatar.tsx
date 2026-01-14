@@ -131,7 +131,7 @@ function InteractiveAvatar() {
         console.log("🗣️ Avatar speaking:", text);
         await avatarRef.current.speak({
           text,
-          taskType: TaskType.REPEAT,
+          taskType: TaskType.TALK,
         });
       } catch (error) {
         console.error("Avatar speak error:", error);

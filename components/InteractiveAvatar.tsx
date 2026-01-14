@@ -15,15 +15,7 @@
  * ================================================
  */
 
-// Web Speech API 타입 선언
-declare global {
-  interface Window {
-    SpeechRecognition: typeof SpeechRecognition;
-    webkitSpeechRecognition: typeof SpeechRecognition;
-  }
-}
-
-type SpeechRecognitionType = SpeechRecognition;
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import {
   AvatarQuality,
@@ -76,14 +68,14 @@ interface WebSpeechCallbacks {
 }
 
 class SimpleWebSpeech {
-  private recognition: SpeechRecognitionType | null = null;
+  private recognition: any = null;
   private isRunning = false;
   private isPaused = false;
 
   constructor(private callbacks: WebSpeechCallbacks) {
     if (typeof window !== "undefined") {
       const SpeechRecognitionAPI =
-        window.SpeechRecognition || window.webkitSpeechRecognition;
+        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
       if (SpeechRecognitionAPI) {
         this.recognition = new SpeechRecognitionAPI();
@@ -98,7 +90,7 @@ class SimpleWebSpeech {
   static isSupported(): boolean {
     if (typeof window === "undefined") return false;
 
-    return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+    return !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
   }
 
   private setupListeners() {

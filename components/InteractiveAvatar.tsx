@@ -15,6 +15,16 @@
  * ================================================
  */
 
+// Web Speech API 타입 선언
+declare global {
+  interface Window {
+    SpeechRecognition: typeof SpeechRecognition;
+    webkitSpeechRecognition: typeof SpeechRecognition;
+  }
+}
+
+type SpeechRecognitionType = SpeechRecognition;
+
 import {
   AvatarQuality,
   StreamingEvents,
@@ -66,16 +76,17 @@ interface WebSpeechCallbacks {
 }
 
 class SimpleWebSpeech {
-  private recognition: SpeechRecognition | null = null;
+  private recognition: SpeechRecognitionType | null = null;
   private isRunning = false;
   private isPaused = false;
 
   constructor(private callbacks: WebSpeechCallbacks) {
     if (typeof window !== "undefined") {
-      const SpeechRecognition =
+      const SpeechRecognitionAPI =
         window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        this.recognition = new SpeechRecognition();
+
+      if (SpeechRecognitionAPI) {
+        this.recognition = new SpeechRecognitionAPI();
         this.recognition.lang = "ko-KR";
         this.recognition.continuous = true;
         this.recognition.interimResults = true;
@@ -86,6 +97,7 @@ class SimpleWebSpeech {
 
   static isSupported(): boolean {
     if (typeof window === "undefined") return false;
+
     return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
   }
 

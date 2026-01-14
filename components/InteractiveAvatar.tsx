@@ -28,21 +28,19 @@ import { useMemoizedFn, useUnmount } from "ahooks";
 
 import { useStreamingAvatarSession } from "./logic/useStreamingAvatarSession";
 import { StreamingAvatarProvider, StreamingAvatarSessionState } from "./logic";
-import { AVATARS } from "@/app/lib/constants";
 
 // ============================================
 // 🔧 설정 - 여기서 아바타/Knowledge Base 설정
 // ============================================
 
-// TODO: labs.heygen.com/interactive-avatar에서 원하는 아바타 ID 복사
-const AVATAR_ID = AVATARS[0]?.avatar_id || "default_avatar_id";
+// 아바타 ID (Wayne)
+const AVATAR_ID = "Wayne_20240711";
 
-// TODO: labs.heygen.com에서 Knowledge Base 생성 후 ID 입력
-// 비워두면 Knowledge Base 없이 동작 (직접 응답 생성 필요)
-const KNOWLEDGE_ID = "";
+// Knowledge Base ID (쇼핑몰 상담 데모)
+const KNOWLEDGE_ID = "23c6bcc9f39046d9831d6a17137ec576";
 
-// 시작 인사말
-const GREETING_MESSAGE = "안녕하세요! 무엇을 도와드릴까요?";
+// 시작 인사말 (Knowledge Base의 Opening Intro와 맞춤)
+const GREETING_MESSAGE = "안녕하세요! AI 상담원 데모입니다. 무엇이든 물어보세요!";
 
 // 아바타 설정
 const AVATAR_CONFIG: StartAvatarRequest = {

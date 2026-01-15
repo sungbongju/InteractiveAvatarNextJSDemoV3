@@ -1,241 +1,584 @@
 /**
  * ================================================
- * 🛒 route.ts - 쇼핑몰 AI 상담 API
+ * InteractiveAvatar.tsx - V3 쇼핑몰 AI 상담 아바타
  * ================================================
  *
- * 고객 DB 정보 기반 OpenAI 응답 생성
+ * DB 연동 버전 (Knowledge Base 사용 안 함)
+ * - 로그인 시 고객 정보 받아서 인사
+ * - route.ts 통해 OpenAI + 고객정보 기반 응답
+ * - Web Speech API로 음성 인식
  *
- * 기능:
- * 1. 인사말 생성 (type: "greeting")
- * 2. 일반 대화 (type: "chat")
- *
- * 경로: app/api/chat/route.ts
  * ================================================
  */
 
-import { NextRequest } from "next/server";
-import OpenAI from "openai";
+import {
+  AvatarQuality,
+  StreamingEvents,
+  VoiceEmotion,
+  StartAvatarRequest,
+  ElevenLabsModel,
+  TaskType,
+} from "@heygen/streaming-avatar";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { useMemoizedFn, useUnmount } from "ahooks";
 
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
-// ============================================
-// 시스템 프롬프트
-// ============================================
-function createSystemPrompt(customer: any): string {
-  let customerInfo = "";
-
-  if (customer) {
-    customerInfo = `
-## 👤 현재 고객 정보
-- 고객 ID: ${customer.customer_id}
-- MBTI 유형: ${customer.mbti_type || "분석 중"}
-- E/I (외향/내향): ${customer.ei_result || "?"} (${customer.ei_confidence || "?"})
-- S/N (감각/직관): ${customer.sn_result || "?"} (${customer.sn_confidence || "?"})
-- T/F (사고/감정): ${customer.tf_result || "?"} (${customer.tf_confidence || "?"})
-- J/P (판단/인식): ${customer.jp_result || "?"} (${customer.jp_confidence || "?"})
-- 고객 요약: ${customer.summary || "정보 없음"}
-- 마케팅 제안: ${customer.marketing_suggestion || "정보 없음"}
-- 할인 선호도: ${customer.discount_ratio ? (parseFloat(customer.discount_ratio) * 100).toFixed(1) + "%" : "?"}
-- 적립금 선호도: ${customer.points_ratio ? (parseFloat(customer.points_ratio) * 100).toFixed(1) + "%" : "?"}
-- 주 구매 요일 집중도: ${customer.weekday_concentration_order || "?"}
-- 주 구매 시간 집중도: ${customer.hour_concentration_order || "?"}
-- 카테고리 집중도: ${customer.category_concentration_order || "?"}
-`;
-  }
-
-  return `당신은 "쇼핑엔티몰"의 AI 상담원입니다. 친절하고 전문적인 쇼핑 도우미입니다.
-
-## 🎯 당신의 역할
-- 고객의 쇼핑을 도와주는 친절한 AI 상담원
-- 고객의 MBTI와 구매 패턴을 분석하여 맞춤형 상담 제공
-- 상품 추천, 구매 이력 안내, MBTI 기반 성향 분석
-
-${customerInfo}
-
-## 💬 응답 규칙
-1. 존댓말을 사용하고 친근하게 대화합니다
-2. 답변은 2-3문장으로 간결하게 합니다
-3. 고객 정보를 활용해 개인화된 응답을 합니다
-4. MBTI 성향에 맞는 쇼핑 조언을 제공합니다
-
-## 📝 질문별 응답 가이드
-
-### "이전에 뭘 샀지요?" / "구매 내역"
-- 고객의 카테고리 집중도와 요약 정보를 바탕으로 답변
-- 예: "고객님은 주로 [카테고리] 상품을 많이 구매하셨네요!"
-
-### "한번에 얼마나 사나요?" / "평균 구매금액"
-- 할인율, 적립금 비율 등을 참고하여 구매 패턴 설명
-- 예: "고객님은 할인 상품을 선호하시는 편이에요!"
-
-### "추천해줘" / "추천 상품"
-- MBTI와 마케팅 제안을 바탕으로 맞춤 추천
-- 예: "ENFP 성향이신 고객님께는 새로운 트렌드 상품을 추천드려요!"
-
-### "MBTI 맞춰봐" / "내 성향"
-- 분석된 MBTI와 각 축의 이유를 설명
-- 예: "분석 결과 고객님은 ESFJ 성향이세요! 외향적이고 실용적인 쇼핑을 선호하시네요."
-
-## ⚠️ 주의사항
-- 실제 구매 금액이나 상세 주문 내역은 없으므로, MBTI와 성향 분석 위주로 답변
-- 개인정보 보호 관련 거부 멘트 금지
-- 항상 긍정적이고 도움이 되는 어조 유지
-
-## 🎁 MBTI별 추천 상품 가이드
-
-### E (외향형) - 사교적, 활동적
-- 파티용품, 모임용 대용량 식품
-- 캠핑/아웃도어 용품
-- 선물세트, 단체 구매 상품
-
-### I (내향형) - 조용한, 개인적
-- 1인용 간편식, 홈카페 용품
-- 독서/취미 용품, 홈케어 제품
-- 프리미엄 1인 가전
-
-### S (감각형) - 실용적, 현실적
-- 실용적 생활용품, 베스트셀러 상품
-- 검증된 브랜드, 가성비 상품
-- 필수 생필품, 정리수납용품
-
-### N (직관형) - 창의적, 미래지향
-- 신상품, 트렌디한 아이템
-- 새로운 브랜드, 이색 상품
-- 친환경/비건 제품
-
-### T (사고형) - 논리적, 분석적
-- 가성비 좋은 상품, 기능성 제품
-- 비교분석 가능한 전자제품
-- 실용적 건강식품
-
-### F (감정형) - 따뜻한, 공감적
-- 선물용 상품, 감성 인테리어
-- 친환경/윤리적 제품
-- 수제/핸드메이드 상품
-
-### J (판단형) - 계획적, 체계적
-- 정기배송 상품, 세트 구성
-- 계획구매용 대용량
-- 멤버십/구독 서비스
-
-### P (인식형) - 유연한, 즉흥적
-- 타임세일, 한정판 상품
-- 즉흥구매용 소용량
-- 새로운 경험 상품
-
-### MBTI 조합 예시
-- ESFJ: 모임용 선물세트, 파티 음식, 가족용 대용량 상품
-- ISTJ: 정리수납함, 정기배송 생필품, 검증된 가성비 상품
-- ENFP: 트렌디한 신상품, 이색 체험 상품, 친환경 아이템
-- INTJ: 프리미엄 1인 가전, 기능성 건강식품, 효율적 생활용품
-
-`;
-}
+import { useStreamingAvatarSession } from "./logic/useStreamingAvatarSession";
+import { StreamingAvatarProvider, StreamingAvatarSessionState } from "./logic";
+import { WebSpeechRecognizer } from "@/app/lib/webSpeechAPI";
 
 // ============================================
-// 인사말 생성
+// 🔧 설정
 // ============================================
-async function generateGreeting(customer: any): Promise<string> {
-  if (!customer) {
-    return "안녕하세요! 쇼핑엔티몰 AI 상담원입니다. 무엇을 도와드릴까요?";
-  }
 
-  const systemPrompt = createSystemPrompt(customer);
+// 아바타 ID (Wayne 고정)
+const AVATAR_ID = "Wayne_20240711";
 
-  const userMessage = `[시스템] 고객 ${customer.customer_id}님이 로그인했습니다.
-MBTI: ${customer.mbti_type || "분석 중"}
-요약: ${customer.summary || "신규 고객"}
+// ❌ Knowledge Base 사용 안 함 (DB 연동 위해)
+const KNOWLEDGE_ID = "";
 
-반갑게 인사해주세요. 규칙:
-- 이모지 사용 금지
-- 2문장 이내로 짧게
-- MBTI는 자연스럽게 언급 (예: "분석 결과 ESFJ 성향이시네요")
-- 과한 표현 금지 (정말, 너무, 🎉 등 금지)`;
+// 아바타 설정
+const AVATAR_CONFIG: StartAvatarRequest = {
+  quality: AvatarQuality.Low,
+  avatarName: AVATAR_ID,
+  // knowledgeId 제거!
+  voice: {
+    rate: 1.2,
+    emotion: VoiceEmotion.FRIENDLY,
+    model: ElevenLabsModel.eleven_flash_v2_5,
+  },
+  language: "ko",
+};
 
-  const response = await client.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userMessage },
-    ],
-    max_tokens: 200,
-    temperature: 0.8,
+// ============================================
+// 메인 컴포넌트
+// ============================================
+function InteractiveAvatar() {
+  const {
+    initAvatar,
+    startAvatar,
+    stopAvatar,
+    sessionState,
+    stream,
+    avatarRef,
+  } = useStreamingAvatarSession();
+
+  // UI 상태
+  const [isLoading, setIsLoading] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [isAvatarSpeaking, setIsAvatarSpeaking] = useState(false);
+  const [interimTranscript, setInterimTranscript] = useState("");
+  const mediaStream = useRef<HTMLVideoElement>(null);
+
+  // 내부 상태 refs
+  const isProcessingRef = useRef(false);
+  const hasGreetedRef = useRef(false);
+  const hasStartedRef = useRef(false);
+  const webSpeechRef = useRef<WebSpeechRecognizer | null>(null);
+  const isAvatarSpeakingRef = useRef(false);
+
+  // 🆕 고객 정보 ref
+  const customerRef = useRef<any>(null);
+  // 대화 히스토리
+  const chatHistoryRef = useRef<{ role: string; content: string }[]>([]);
+
+  // ============================================
+  // API 호출
+  // ============================================
+  const fetchAccessToken = async () => {
+    const response = await fetch("/api/get-access-token", { method: "POST" });
+    const token = await response.text();
+    return token;
+  };
+
+  // 🆕 Chat API 호출 (route.ts)
+  const callChatAPI = async (
+    type: string,
+    params: Record<string, any> = {}
+  ): Promise<string> => {
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type,
+          customer: customerRef.current,
+          history: chatHistoryRef.current,
+          ...params,
+        }),
+      });
+      const data = await response.json();
+      return data.reply || "죄송합니다. 응답을 생성하지 못했습니다.";
+    } catch (error) {
+      console.error("Chat API error:", error);
+      return "서버 연결에 문제가 있습니다.";
+    }
+  };
+
+  // ============================================
+  // 아바타 음성 출력
+  // ============================================
+  const speakWithAvatar = useCallback(
+    async (text: string) => {
+      if (!avatarRef.current || !text) return;
+
+      try {
+        console.log("🔇 Web Speech 일시정지");
+        isAvatarSpeakingRef.current = true;
+        setIsAvatarSpeaking(true);
+        webSpeechRef.current?.pause();
+
+        console.log("🗣️ Avatar speak:", text);
+        await avatarRef.current.speak({
+          text,
+          taskType: TaskType.REPEAT,
+        });
+      } catch (error: any) {
+        console.error("Avatar speak error:", error);
+        
+        // 401 에러면 세션 재시작 필요
+        if (error?.message?.includes("401") || error?.status === 401) {
+          console.log("🔄 토큰 만료 - 세션 재시작 필요");
+          hasStartedRef.current = false;
+          hasGreetedRef.current = false;
+        }
+        
+        isAvatarSpeakingRef.current = false;
+        setIsAvatarSpeaking(false);
+        webSpeechRef.current?.resume();
+      }
+    },
+    [avatarRef],
+  );
+
+  // ============================================
+  // 🆕 인사말 생성 (고객 정보 기반)
+  // ============================================
+  const generateGreeting = useCallback(async () => {
+    const customer = customerRef.current;
+
+    if (customer) {
+      // DB에서 받은 고객 정보로 인사
+      const reply = await callChatAPI("greeting");
+      return reply;
+    } else {
+      return "안녕하세요! AI 상담원 데모입니다. 무엇이든 물어보세요!";
+    }
+  }, []);
+
+  // ============================================
+  // 사용자 음성 처리 (route.ts 호출)
+  // ============================================
+  const handleUserSpeech = useCallback(
+    async (transcript: string) => {
+      if (isAvatarSpeakingRef.current) {
+        console.log("⏸️ 아바타가 말하는 중 - 무시:", transcript);
+        return;
+      }
+
+      if (!transcript.trim() || isProcessingRef.current) return;
+
+      isProcessingRef.current = true;
+      setIsLoading(true);
+      setInterimTranscript("");
+      console.log("🎯 User said:", transcript);
+
+      try {
+        await avatarRef.current?.interrupt();
+      } catch {
+        // ignore
+      }
+
+      // 🆕 route.ts 호출해서 응답 받기
+      const reply = await callChatAPI("chat", { message: transcript });
+
+      // 대화 히스토리에 추가
+      chatHistoryRef.current.push({ role: "user", content: transcript });
+      chatHistoryRef.current.push({ role: "assistant", content: reply });
+
+      // 아바타가 말하기
+      await speakWithAvatar(reply);
+
+      setIsLoading(false);
+      isProcessingRef.current = false;
+    },
+    [avatarRef, speakWithAvatar],
+  );
+
+  // ============================================
+  // Web Speech API 초기화
+  // ============================================
+  const initWebSpeech = useCallback(() => {
+    if (webSpeechRef.current) {
+      console.log("🎤 Web Speech 이미 초기화됨");
+      return;
+    }
+
+    if (!WebSpeechRecognizer.isSupported()) {
+      console.error("🎤 Web Speech API 지원하지 않는 브라우저");
+      alert(
+        "이 브라우저는 음성 인식을 지원하지 않습니다. Chrome 또는 Edge를 사용해주세요.",
+      );
+      return;
+    }
+
+    console.log("🎤 Web Speech API 초기화 중...");
+
+    webSpeechRef.current = new WebSpeechRecognizer(
+      {
+        onResult: (transcript: string, isFinal: boolean) => {
+          if (isAvatarSpeakingRef.current) {
+            return;
+          }
+
+          if (isFinal) {
+            console.log("🎤 최종 인식:", transcript);
+            setInterimTranscript("");
+            handleUserSpeech(transcript);
+          } else {
+            setInterimTranscript(transcript);
+          }
+        },
+
+        onStart: () => {
+          if (!isAvatarSpeakingRef.current) {
+            setIsListening(true);
+          }
+        },
+
+        onEnd: () => {
+          setIsListening(false);
+        },
+
+        onSpeechStart: () => {
+          if (!isAvatarSpeakingRef.current) {
+            setIsListening(true);
+          }
+        },
+
+        onSpeechEnd: () => {
+          setTimeout(() => {
+            if (!isAvatarSpeakingRef.current) {
+              setIsListening(false);
+            }
+          }, 500);
+        },
+
+        onError: (error: string) => {
+          console.error("🎤 Web Speech 에러:", error);
+          if (error === "not-allowed") {
+            alert(
+              "마이크 권한이 필요합니다. 브라우저 설정에서 마이크를 허용해주세요.",
+            );
+          }
+        },
+      },
+      {
+        lang: "ko-KR",
+        continuous: true,
+        interimResults: true,
+        autoRestart: true,
+      },
+    );
+
+    console.log("🎤 Web Speech API 초기화 완료");
+  }, [handleUserSpeech]);
+
+  // ============================================
+  // 세션 초기화
+  // ============================================
+  const resetSession = useMemoizedFn(async () => {
+    console.log("🔄 세션 초기화 중...");
+
+    if (webSpeechRef.current) {
+      webSpeechRef.current.destroy();
+      webSpeechRef.current = null;
+    }
+
+    try {
+      await stopAvatar();
+    } catch (e) {
+      console.log("stopAvatar 에러 (무시):", e);
+    }
+
+    hasStartedRef.current = false;
+    hasGreetedRef.current = false;
+    isProcessingRef.current = false;
+    isAvatarSpeakingRef.current = false;
+    chatHistoryRef.current = [];
+    setIsLoading(false);
+    setIsListening(false);
+    setIsAvatarSpeaking(false);
+    setInterimTranscript("");
+
+    await new Promise((r) => setTimeout(r, 500));
+    console.log("🔄 세션 초기화 완료");
   });
 
+  // ============================================
+  // 세션 시작
+  // ============================================
+  const startSession = useMemoizedFn(async () => {
+    if (hasStartedRef.current) {
+      console.log("⚠️ 이미 세션 시작됨, 무시");
+      return;
+    }
+    hasStartedRef.current = true;
+
+    try {
+      // 기존 아바타 정리
+      if (avatarRef.current) {
+        try {
+          await avatarRef.current.stopAvatar();
+        } catch (e) {
+          // 무시
+        }
+      }
+
+      const token = await fetchAccessToken();
+      console.log("🔑 새 토큰 발급 완료");
+      const avatar = initAvatar(token);
+
+      avatar.on(StreamingEvents.STREAM_READY, async () => {
+        console.log("✅ Stream ready");
+
+        if (!hasGreetedRef.current) {
+          await new Promise((r) => setTimeout(r, 1500));
+
+          // 🆕 고객 정보 기반 인사말 생성
+          const greeting = await generateGreeting();
+          await speakWithAvatar(greeting);
+
+          hasGreetedRef.current = true;
+        }
+      });
+
+      avatar.on(StreamingEvents.STREAM_DISCONNECTED, () => {
+        console.log("❌ Stream disconnected");
+        hasGreetedRef.current = false;
+        hasStartedRef.current = false;
+        webSpeechRef.current?.destroy();
+        webSpeechRef.current = null;
+      });
+
+      avatar.on(StreamingEvents.AVATAR_START_TALKING, () => {
+        console.log("🗣️ Avatar started talking - Web Speech 일시정지");
+        isAvatarSpeakingRef.current = true;
+        setIsAvatarSpeaking(true);
+        webSpeechRef.current?.pause();
+      });
+
+      avatar.on(StreamingEvents.AVATAR_STOP_TALKING, async () => {
+        console.log("🔈 Avatar stopped talking - Web Speech 재개");
+        isAvatarSpeakingRef.current = false;
+        setIsAvatarSpeaking(false);
+        await new Promise((r) => setTimeout(r, 500));
+        webSpeechRef.current?.resume();
+        console.log("🎤 Web Speech 재개 완료");
+      });
+
+      await startAvatar(AVATAR_CONFIG);
+
+      console.log("🎤 Web Speech API 시작...");
+      initWebSpeech();
+
+      setTimeout(() => {
+        webSpeechRef.current?.start();
+        console.log("🎤 Web Speech 인식 시작");
+      }, 2000);
+    } catch (error) {
+      console.error("Session error:", error);
+      hasStartedRef.current = false;
+    }
+  });
+
+  // ============================================
+  // 마이크 토글
+  // ============================================
+  const toggleMicrophone = useCallback(() => {
+    if (!webSpeechRef.current) {
+      initWebSpeech();
+      setTimeout(() => {
+        webSpeechRef.current?.start();
+      }, 100);
+      return;
+    }
+
+    if (webSpeechRef.current.getIsPaused()) {
+      webSpeechRef.current.resume();
+    } else {
+      webSpeechRef.current.pause();
+    }
+  }, [initWebSpeech]);
+
+  // ============================================
+  // postMessage 통신 (외부 페이지 연동용)
+  // ============================================
+  useEffect(() => {
+    const handleMessage = async (event: MessageEvent) => {
+      const { type, customer } = event.data || {};
+
+      switch (type) {
+        case "RESET_AVATAR":
+        case "STOP_AVATAR":
+          console.log(`📥 ${type}`);
+          await resetSession();
+          break;
+
+        case "START_AVATAR":
+          console.log("📥 START_AVATAR");
+          await resetSession();
+          startSession();
+          break;
+
+        case "CUSTOMER_LOGIN":
+          console.log("📥 CUSTOMER_LOGIN:", customer);
+          // 이미 시작 중이면 무시
+          if (hasStartedRef.current) {
+            console.log("⚠️ 이미 세션 진행 중 - 고객 정보만 업데이트");
+            customerRef.current = customer;
+            return;
+          }
+          customerRef.current = customer;
+          chatHistoryRef.current = [];
+          // 로그인하면 바로 아바타 시작!
+          await resetSession();
+          await new Promise((r) => setTimeout(r, 300));
+          startSession();
+          break;
+
+        case "CUSTOMER_LOGOUT":
+          console.log("📥 CUSTOMER_LOGOUT");
+          customerRef.current = null;
+          chatHistoryRef.current = [];
+          await resetSession();
+          break;
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [resetSession, startSession]);
+
+  // 언마운트 시 정리
+  useUnmount(() => {
+    webSpeechRef.current?.destroy();
+    try {
+      stopAvatar();
+    } catch {
+      // ignore
+    }
+  });
+
+  // 비디오 스트림 연결
+  useEffect(() => {
+    if (stream && mediaStream.current) {
+      mediaStream.current.srcObject = stream;
+      mediaStream.current.onloadedmetadata = () => mediaStream.current?.play();
+    }
+  }, [stream]);
+
+  // ============================================
+  // UI 헬퍼
+  // ============================================
+  const getStatusText = () => {
+    if (isAvatarSpeaking) return "말하는 중...";
+    if (isListening) return "듣는 중...";
+    if (isLoading) return "생각 중...";
+    return "말씀하세요";
+  };
+
+  const getStatusColor = () => {
+    if (isAvatarSpeaking) return "bg-blue-500";
+    if (isListening) return "bg-red-500 animate-pulse";
+    if (isLoading) return "bg-yellow-500";
+    return "bg-green-500";
+  };
+
+  // ============================================
+  // 렌더링 - PIP 최적화 UI
+  // ============================================
   return (
-    response.choices[0]?.message?.content ||
-    `안녕하세요 ${customer.customer_id}님! 쇼핑엔티몰에 오신 것을 환영합니다!`
+    <div className="w-full h-full flex flex-col bg-black">
+      {sessionState === StreamingAvatarSessionState.CONNECTED && stream ? (
+        <div className="flex-1 relative">
+          {/* 아바타 비디오 */}
+          <video
+            ref={mediaStream}
+            autoPlay
+            playsInline
+            className="w-full h-full object-cover"
+          />
+
+          {/* 종료 버튼 */}
+          <button
+            className="absolute top-2 right-2 w-8 h-8 bg-black/50 hover:bg-red-600 text-white rounded-full flex items-center justify-center text-sm transition-colors"
+            onClick={resetSession}
+            title="종료"
+          >
+            ✕
+          </button>
+
+          {/* 마이크 토글 버튼 */}
+          <button
+            className={`absolute top-2 left-2 w-8 h-8 ${
+              isListening
+                ? "bg-red-500 animate-pulse"
+                : "bg-black/50 hover:bg-green-600"
+            } text-white rounded-full flex items-center justify-center text-sm transition-colors`}
+            disabled={isAvatarSpeaking}
+            onClick={toggleMicrophone}
+            title={isListening ? "마이크 끄기" : "마이크 켜기"}
+          >
+            {isListening ? "🎤" : "🎙️"}
+          </button>
+
+          {/* 상태 표시 */}
+          <div className="absolute bottom-2 left-2 flex items-center gap-2">
+            <div className={`w-3 h-3 rounded-full ${getStatusColor()}`} />
+            <span className="text-white text-xs bg-black/60 px-2 py-1 rounded">
+              {getStatusText()}
+            </span>
+          </div>
+
+          {/* 중간 인식 결과 표시 */}
+          {interimTranscript && (
+            <div className="absolute bottom-12 left-2 right-2">
+              <div className="bg-black/70 text-white text-xs px-3 py-2 rounded-lg">
+                🎤 &quot;{interimTranscript}&quot;
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        /* 시작 화면 */
+        <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-zinc-900 to-black">
+          {sessionState === StreamingAvatarSessionState.CONNECTING ? (
+            <div className="flex flex-col items-center gap-3 text-white">
+              <div className="w-10 h-10 border-3 border-purple-500 border-t-transparent rounded-full animate-spin" />
+              <span className="text-sm">연결 중...</span>
+            </div>
+          ) : (
+            <button
+              className="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-full text-base font-medium shadow-lg transition-colors flex items-center gap-2"
+              onClick={startSession}
+            >
+              <span>💬</span>
+              <span>상담 시작</span>
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
 // ============================================
-// 일반 대화
+// Provider Wrapper
 // ============================================
-async function generateChat(
-  message: string,
-  history: { role: string; content: string }[],
-  customer: any
-): Promise<string> {
-  const systemPrompt = createSystemPrompt(customer);
-
-  const messages: OpenAI.ChatCompletionMessageParam[] = [
-    { role: "system", content: systemPrompt },
-    ...history.slice(-10).map((msg) => ({
-      role: msg.role as "user" | "assistant",
-      content: msg.content,
-    })),
-    { role: "user", content: message },
-  ];
-
-  const response = await client.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages,
-    max_tokens: 300,
-    temperature: 0.7,
-  });
-
+export default function InteractiveAvatarWrapper() {
   return (
-    response.choices[0]?.message?.content ||
-    "죄송합니다. 답변을 생성하지 못했습니다."
+    <StreamingAvatarProvider basePath={process.env.NEXT_PUBLIC_BASE_API_URL}>
+      <InteractiveAvatar />
+    </StreamingAvatarProvider>
   );
-}
-
-// ============================================
-// API 라우트 핸들러
-// ============================================
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { type, message, history, customer } = body;
-
-    if (!process.env.OPENAI_API_KEY) {
-      throw new Error("OpenAI API key is missing");
-    }
-
-    let reply: string;
-
-    switch (type) {
-      case "greeting":
-        reply = await generateGreeting(customer);
-        break;
-
-      case "chat":
-      default:
-        reply = await generateChat(message || "", history || [], customer);
-        break;
-    }
-
-    return new Response(JSON.stringify({ reply }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
-  } catch (error) {
-    console.error("API error:", error);
-    return new Response(JSON.stringify({ error: "Failed to get response" }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
 }

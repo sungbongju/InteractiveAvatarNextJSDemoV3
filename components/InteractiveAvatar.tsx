@@ -463,7 +463,7 @@ function InteractiveAvatar() {
             webSpeechRef.current?.pause();
 
             try {
-              const response = await callChatAPI(message);
+              const response = await callChatAPI("chat", { message });
               await speakWithAvatar(response);
             } catch (error) {
               console.error("USER_MESSAGE 처리 에러:", error);

@@ -27,6 +27,14 @@ function createSystemPrompt(customer: any): string {
   let customerInfo = "";
 
   if (customer) {
+    // 평균 주문 금액 포맷팅
+    const avgAmount = customer.avg_order_amount 
+      ? Number(customer.avg_order_amount).toLocaleString() + "원"
+      : "정보 없음";
+    const totalAmount = customer.total_order_amount
+      ? Number(customer.total_order_amount).toLocaleString() + "원"
+      : "정보 없음";
+
     customerInfo = `
 ## 👤 현재 고객 정보
 - 고객 ID: ${customer.customer_id}
@@ -37,10 +45,19 @@ function createSystemPrompt(customer: any): string {
 - J/P (판단/인식): ${customer.jp_result || "?"} (${customer.jp_confidence || "?"})
 - 고객 요약: ${customer.summary || "정보 없음"}
 - 마케팅 제안: ${customer.marketing_suggestion || "정보 없음"}
+
+## 💰 구매 정보
+- 총 주문 금액: ${totalAmount}
+- 총 주문 건수: ${customer.total_order_count || 0}건
+- 평균 주문 금액: ${avgAmount}
+- 첫 주문일: ${customer.first_order_date || "정보 없음"}
+- 마지막 주문일: ${customer.last_order_date || "정보 없음"}
+- 회원 등급: ${customer.member_grade || "정보 없음"}
+- 지역: ${customer.region_sido || ""} ${customer.region_sigungu || ""}
+
+## 📊 쇼핑 성향
 - 할인 선호도: ${customer.discount_ratio ? (parseFloat(customer.discount_ratio) * 100).toFixed(1) + "%" : "?"}
 - 적립금 선호도: ${customer.points_ratio ? (parseFloat(customer.points_ratio) * 100).toFixed(1) + "%" : "?"}
-- 주 구매 요일 집중도: ${customer.weekday_concentration_order || "?"}
-- 주 구매 시간 집중도: ${customer.hour_concentration_order || "?"}
 - 카테고리 집중도: ${customer.category_concentration_order || "?"}
 `;
   }
@@ -63,16 +80,16 @@ ${customerInfo}
 ## 📝 질문별 응답 가이드
 
 ### "이전에 뭘 샀지요?" / "구매 내역"
-- 고객의 카테고리 집중도와 요약 정보를 바탕으로 답변
-- 예: "고객님은 주로 [카테고리] 상품을 많이 구매하셨네요!"
+- 총 주문 건수, 첫 주문일, 마지막 주문일 정보를 활용
+- 예: "고객님은 총 5건 주문하셨고, 마지막 주문은 6월 26일이었어요."
 
 ### "한번에 얼마나 사나요?" / "평균 구매금액"
-- 할인율, 적립금 비율 등을 참고하여 구매 패턴 설명
-- 예: "고객님은 할인 상품을 선호하시는 편이에요!"
+- 평균 주문 금액(avg_order_amount)을 직접 알려주기
+- 예: "고객님은 평균 약 42,000원 정도 구매하시네요!"
 
 ### "추천해줘" / "추천 상품"
 - MBTI와 마케팅 제안을 바탕으로 맞춤 추천
-- 예: "ENFP 성향이신 고객님께는 새로운 트렌드 상품을 추천드려요!"
+- 예: "ESFJ 성향이신 고객님께는 가족/모임용 상품을 추천드려요!"
 
 ### "MBTI 맞춰봐" / "내 성향"
 - 분석된 MBTI와 각 축의 이유를 설명

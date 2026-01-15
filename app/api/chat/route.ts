@@ -99,8 +99,11 @@ async function generateGreeting(customer: any): Promise<string> {
 MBTI: ${customer.mbti_type || "분석 중"}
 요약: ${customer.summary || "신규 고객"}
 
-반갑게 인사하고, MBTI 성향을 간단히 언급하며 맞춤형 환영 메시지를 전해주세요.
-2-3문장으로 짧고 친근하게!`;
+반갑게 인사해주세요. 규칙:
+- 이모지 사용 금지
+- 2문장 이내로 짧게
+- MBTI는 자연스럽게 언급 (예: "분석 결과 ESFJ 성향이시네요")
+- 과한 표현 금지 (정말, 너무, 🎉 등 금지)`;
 
   const response = await client.chat.completions.create({
     model: "gpt-4o-mini",

@@ -162,14 +162,13 @@ async function generateGreeting(customer: any): Promise<string> {
   const systemPrompt = createSystemPrompt(customer);
 
   const userMessage = `[시스템] 고객 ${customer.customer_id}님이 로그인했습니다.
-MBTI: ${customer.mbti_type || "분석 중"}
-요약: ${customer.summary || "신규 고객"}
 
 반갑게 인사해주세요. 규칙:
 - 이모지 사용 금지
 - 2문장 이내로 짧게
-- MBTI는 자연스럽게 언급 (예: "분석 결과 ESFJ 성향이시네요")
-- 과한 표현 금지 (정말, 너무, 🎉 등 금지)`;
+- MBTI 언급 금지 (고객이 물어보면 그때 알려주기)
+- 과한 표현 금지 (정말, 너무 등 금지)
+- 자연스럽게 "무엇을 도와드릴까요?" 등으로 마무리`;
 
   const response = await client.chat.completions.create({
     model: "gpt-4o-mini",
@@ -183,7 +182,7 @@ MBTI: ${customer.mbti_type || "분석 중"}
 
   return (
     response.choices[0]?.message?.content ||
-    `안녕하세요 ${customer.customer_id}님! 쇼핑엔티몰에 오신 것을 환영합니다!`
+    `안녕하세요 ${customer.customer_id}님! 쇼핑엔티몰에 오신 것을 환영합니다.`
   );
 }
 

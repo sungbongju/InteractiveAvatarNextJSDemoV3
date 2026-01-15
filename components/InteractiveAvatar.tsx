@@ -452,6 +452,26 @@ function InteractiveAvatar() {
           chatHistoryRef.current = [];
           await resetSession();
           break;
+
+        case "USER_MESSAGE":
+          // 외부에서 텍스트 메시지 전송 (개발/테스트용)
+          const { message } = event.data || {};
+          if (message && !isProcessingRef.current) {
+            console.log("📥 USER_MESSAGE:", message);
+            isProcessingRef.current = true;
+            setIsListening(false);
+            webSpeechRef.current?.pause();
+
+            try {
+              const response = await callChatAPI(message);
+              await speakWithAvatar(response);
+            } catch (error) {
+              console.error("USER_MESSAGE 처리 에러:", error);
+            } finally {
+              isProcessingRef.current = false;
+            }
+          }
+          break;
       }
     };
 

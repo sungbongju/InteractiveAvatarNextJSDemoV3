@@ -3,14 +3,11 @@
  * InteractiveAvatar.tsx - V3 쇼핑몰 AI 상담 아바타
  * ================================================
  *
- * 쇼핑몰/고객센터 등 범용 상담용 아바타
- * - HeyGen Knowledge Base 연동 (TaskType.TALK)
- * - Web Speech API (기존 webSpeechAPI.ts 사용)
- * - PIP 위젯 최적화 UI
+ * DB 연동 버전 (Knowledge Base 사용 안 함)
+ * - 로그인 시 고객 정보 받아서 인사
+ * - route.ts 통해 OpenAI + 고객정보 기반 응답
+ * - Web Speech API로 음성 인식
  *
- * 설정:
- * - AVATAR_ID: Wayne_20240711
- * - KNOWLEDGE_ID: labs.heygen.com에서 Knowledge Base 생성 후 ID
  * ================================================
  */
 
@@ -36,17 +33,14 @@ import { WebSpeechRecognizer } from "@/app/lib/webSpeechAPI";
 // 아바타 ID (Wayne 고정)
 const AVATAR_ID = "Wayne_20240711";
 
-// Knowledge Base ID (쇼핑몰 상담 데모)
-const KNOWLEDGE_ID = "23c6bcc9f39046d9831d6a17137ec576";
-
-// 시작 인사말
-const GREETING_MESSAGE = "안녕하세요! AI 상담원 데모입니다. 무엇이든 물어보세요!";
+// ❌ Knowledge Base 사용 안 함 (DB 연동 위해)
+const KNOWLEDGE_ID = "";
 
 // 아바타 설정
 const AVATAR_CONFIG: StartAvatarRequest = {
   quality: AvatarQuality.Low,
   avatarName: AVATAR_ID,
-  knowledgeId: KNOWLEDGE_ID || undefined,
+  // knowledgeId 제거!
   voice: {
     rate: 1.2,
     emotion: VoiceEmotion.FRIENDLY,
@@ -82,6 +76,11 @@ function InteractiveAvatar() {
   const webSpeechRef = useRef<WebSpeechRecognizer | null>(null);
   const isAvatarSpeakingRef = useRef(false);
 
+  // 🆕 고객 정보 ref
+  const customerRef = useRef<any>(null);
+  // 대화 히스토리
+  const chatHistoryRef = useRef<{ role: string; content: string }[]>([]);
+
   // ============================================
   // API 호출
   // ============================================
@@ -91,10 +90,34 @@ function InteractiveAvatar() {
     return token;
   };
 
+  // 🆕 Chat API 호출 (route.ts)
+  const callChatAPI = async (
+    type: string,
+    params: Record<string, any> = {}
+  ): Promise<string> => {
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type,
+          customer: customerRef.current,
+          history: chatHistoryRef.current,
+          ...params,
+        }),
+      });
+      const data = await response.json();
+      return data.reply || "죄송합니다. 응답을 생성하지 못했습니다.";
+    } catch (error) {
+      console.error("Chat API error:", error);
+      return "서버 연결에 문제가 있습니다.";
+    }
+  };
+
   // ============================================
-  // 아바타 음성 출력 (인사말용 - REPEAT)
+  // 아바타 음성 출력
   // ============================================
-  const speakGreeting = useCallback(
+  const speakWithAvatar = useCallback(
     async (text: string) => {
       if (!avatarRef.current || !text) return;
 
@@ -104,7 +127,7 @@ function InteractiveAvatar() {
         setIsAvatarSpeaking(true);
         webSpeechRef.current?.pause();
 
-        console.log("🗣️ Avatar greeting:", text);
+        console.log("🗣️ Avatar speak:", text);
         await avatarRef.current.speak({
           text,
           taskType: TaskType.REPEAT,
@@ -120,7 +143,22 @@ function InteractiveAvatar() {
   );
 
   // ============================================
-  // 사용자 음성 처리 (Knowledge Base - TALK)
+  // 🆕 인사말 생성 (고객 정보 기반)
+  // ============================================
+  const generateGreeting = useCallback(async () => {
+    const customer = customerRef.current;
+
+    if (customer) {
+      // DB에서 받은 고객 정보로 인사
+      const reply = await callChatAPI("greeting");
+      return reply;
+    } else {
+      return "안녕하세요! AI 상담원 데모입니다. 무엇이든 물어보세요!";
+    }
+  }, []);
+
+  // ============================================
+  // 사용자 음성 처리 (route.ts 호출)
   // ============================================
   const handleUserSpeech = useCallback(
     async (transcript: string) => {
@@ -142,32 +180,20 @@ function InteractiveAvatar() {
         // ignore
       }
 
-      // Knowledge Base에 질문 전달 (TALK)
-      if (KNOWLEDGE_ID && avatarRef.current) {
-        try {
-          console.log("📤 Knowledge Base에 질문:", transcript);
-          isAvatarSpeakingRef.current = true;
-          setIsAvatarSpeaking(true);
-          webSpeechRef.current?.pause();
+      // 🆕 route.ts 호출해서 응답 받기
+      const reply = await callChatAPI("chat", { message: transcript });
 
-          await avatarRef.current.speak({
-            text: transcript,
-            taskType: TaskType.TALK,
-          });
-        } catch (error) {
-          console.error("Knowledge Base 질문 에러:", error);
-          isAvatarSpeakingRef.current = false;
-          setIsAvatarSpeaking(false);
-          webSpeechRef.current?.resume();
-        }
-      } else {
-        console.log("⚠️ Knowledge Base 없음 또는 아바타 없음");
-      }
+      // 대화 히스토리에 추가
+      chatHistoryRef.current.push({ role: "user", content: transcript });
+      chatHistoryRef.current.push({ role: "assistant", content: reply });
+
+      // 아바타가 말하기
+      await speakWithAvatar(reply);
 
       setIsLoading(false);
       isProcessingRef.current = false;
     },
-    [avatarRef],
+    [avatarRef, speakWithAvatar],
   );
 
   // ============================================
@@ -270,6 +296,7 @@ function InteractiveAvatar() {
     hasGreetedRef.current = false;
     isProcessingRef.current = false;
     isAvatarSpeakingRef.current = false;
+    chatHistoryRef.current = [];
     setIsLoading(false);
     setIsListening(false);
     setIsAvatarSpeaking(false);
@@ -298,7 +325,11 @@ function InteractiveAvatar() {
 
         if (!hasGreetedRef.current) {
           await new Promise((r) => setTimeout(r, 1500));
-          await speakGreeting(GREETING_MESSAGE);
+
+          // 🆕 고객 정보 기반 인사말 생성
+          const greeting = await generateGreeting();
+          await speakWithAvatar(greeting);
+
           hasGreetedRef.current = true;
         }
       });
@@ -362,11 +393,6 @@ function InteractiveAvatar() {
   }, [initWebSpeech]);
 
   // ============================================
-  // 고객 정보 저장 ref
-  // ============================================
-  const customerRef = useRef<any>(null);
-
-  // ============================================
   // postMessage 통신 (외부 페이지 연동용)
   // ============================================
   useEffect(() => {
@@ -389,6 +415,7 @@ function InteractiveAvatar() {
         case "CUSTOMER_LOGIN":
           console.log("📥 CUSTOMER_LOGIN:", customer);
           customerRef.current = customer;
+          chatHistoryRef.current = [];
           // 로그인하면 바로 아바타 시작!
           await resetSession();
           startSession();
@@ -397,6 +424,7 @@ function InteractiveAvatar() {
         case "CUSTOMER_LOGOUT":
           console.log("📥 CUSTOMER_LOGOUT");
           customerRef.current = null;
+          chatHistoryRef.current = [];
           await resetSession();
           break;
       }

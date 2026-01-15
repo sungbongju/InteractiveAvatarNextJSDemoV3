@@ -362,11 +362,16 @@ function InteractiveAvatar() {
   }, [initWebSpeech]);
 
   // ============================================
+  // 고객 정보 저장 ref
+  // ============================================
+  const customerRef = useRef<any>(null);
+
+  // ============================================
   // postMessage 통신 (외부 페이지 연동용)
   // ============================================
   useEffect(() => {
     const handleMessage = async (event: MessageEvent) => {
-      const { type } = event.data || {};
+      const { type, customer } = event.data || {};
 
       switch (type) {
         case "RESET_AVATAR":
@@ -379,6 +384,20 @@ function InteractiveAvatar() {
           console.log("📥 START_AVATAR");
           await resetSession();
           startSession();
+          break;
+
+        case "CUSTOMER_LOGIN":
+          console.log("📥 CUSTOMER_LOGIN:", customer);
+          customerRef.current = customer;
+          // 로그인하면 바로 아바타 시작!
+          await resetSession();
+          startSession();
+          break;
+
+        case "CUSTOMER_LOGOUT":
+          console.log("📥 CUSTOMER_LOGOUT");
+          customerRef.current = null;
+          await resetSession();
           break;
       }
     };

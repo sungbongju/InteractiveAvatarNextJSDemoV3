@@ -414,10 +414,17 @@ function InteractiveAvatar() {
 
         case "CUSTOMER_LOGIN":
           console.log("📥 CUSTOMER_LOGIN:", customer);
+          // 이미 시작 중이면 무시
+          if (hasStartedRef.current) {
+            console.log("⚠️ 이미 세션 진행 중 - 고객 정보만 업데이트");
+            customerRef.current = customer;
+            return;
+          }
           customerRef.current = customer;
           chatHistoryRef.current = [];
           // 로그인하면 바로 아바타 시작!
           await resetSession();
+          await new Promise((r) => setTimeout(r, 300));
           startSession();
           break;
 

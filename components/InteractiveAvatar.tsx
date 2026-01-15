@@ -132,8 +132,16 @@ function InteractiveAvatar() {
           text,
           taskType: TaskType.REPEAT,
         });
-      } catch (error) {
+      } catch (error: any) {
         console.error("Avatar speak error:", error);
+        
+        // 401 에러면 세션 재시작 필요
+        if (error?.message?.includes("401") || error?.status === 401) {
+          console.log("🔄 토큰 만료 - 세션 재시작 필요");
+          hasStartedRef.current = false;
+          hasGreetedRef.current = false;
+        }
+        
         isAvatarSpeakingRef.current = false;
         setIsAvatarSpeaking(false);
         webSpeechRef.current?.resume();
@@ -317,7 +325,17 @@ function InteractiveAvatar() {
     hasStartedRef.current = true;
 
     try {
+      // 기존 아바타 정리
+      if (avatarRef.current) {
+        try {
+          await avatarRef.current.stopAvatar();
+        } catch (e) {
+          // 무시
+        }
+      }
+
       const token = await fetchAccessToken();
+      console.log("🔑 새 토큰 발급 완료");
       const avatar = initAvatar(token);
 
       avatar.on(StreamingEvents.STREAM_READY, async () => {
